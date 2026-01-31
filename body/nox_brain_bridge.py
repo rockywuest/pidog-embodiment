@@ -471,14 +471,17 @@ def main():
     print(f"[bridge] Listening on http://{LISTEN_HOST}:{LISTEN_PORT}", flush=True)
     print(f"[bridge] Known faces: {face_db.list_known()}", flush=True)
     
-    # Start autonomous behavior system
-    try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from nox_autonomous import start_autonomous
-        auto_state = start_autonomous()
-        print("[bridge] Autonomous behavior active", flush=True)
-    except Exception as e:
-        print(f"[bridge] Autonomous behavior failed to start: {e}", flush=True)
+    # Start autonomous behavior system (optional — disable with NOX_NO_AUTO=1)
+    if not os.environ.get("NOX_NO_AUTO"):
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from nox_autonomous import start_autonomous
+            auto_state = start_autonomous()
+            print("[bridge] Autonomous behavior active", flush=True)
+        except Exception as e:
+            print(f"[bridge] Autonomous behavior skipped: {e}", flush=True)
+    else:
+        print("[bridge] Autonomous behavior disabled (NOX_NO_AUTO=1)", flush=True)
     
     try:
         server.serve_forever()
