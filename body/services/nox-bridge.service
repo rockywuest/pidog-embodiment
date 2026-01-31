@@ -1,0 +1,18 @@
+[Unit]
+Description=Nox Brain Bridge (Robot HTTP API)
+After=network.target nox-body.service
+Wants=nox-body.service
+
+[Service]
+Type=simple
+User=pidog
+WorkingDirectory=/home/pidog
+ExecStart=/usr/bin/python3 -u nox_brain_bridge.py
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+# Optional: Environment=NOX_API_TOKEN=your-secret
+EnvironmentFile=-/etc/default/nox-bridge
+
+[Install]
+WantedBy=multi-user.target

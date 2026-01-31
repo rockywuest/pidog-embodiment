@@ -1,0 +1,32 @@
+# Models (too large for git)
+models/*.onnx
+models/*.pb
+
+# Face database (personal data)
+face_db/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+/tmp/
+*.log

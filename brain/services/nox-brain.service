@@ -1,0 +1,21 @@
+[Unit]
+Description=Nox Voice Brain (LLM-powered robot intelligence)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pidog-embodiment/brain
+ExecStart=/usr/bin/python3 -u nox_voice_brain.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# Set these in /etc/default/nox-brain or override:
+# Environment=OPENAI_API_KEY=your-key
+# Environment=PIDOG_HOST=pidog.local
+# Environment=LLM_MODEL=gpt-4o-mini
+EnvironmentFile=-/etc/default/nox-brain
+
+[Install]
+WantedBy=multi-user.target

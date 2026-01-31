@@ -1,0 +1,15 @@
+[Unit]
+Description=Nox Body Daemon (Hardware Control)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pidog
+ExecStart=/usr/bin/python3 -u nox_daemon.py
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

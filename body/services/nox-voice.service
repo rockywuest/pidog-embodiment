@@ -1,0 +1,15 @@
+[Unit]
+Description=Nox Voice Loop (Wake Word + STT)
+After=network.target nox-body.service
+
+[Service]
+Type=simple
+User=pidog
+WorkingDirectory=/home/pidog
+ExecStart=/usr/bin/python3 -u nox_voice_loop_v2.py
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

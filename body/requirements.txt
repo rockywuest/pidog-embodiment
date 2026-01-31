@@ -1,0 +1,6 @@
+# Body-side dependencies
+# Most are pre-installed on Raspberry Pi OS
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+vosk>=0.3.45
+piper-tts>=1.0.0
