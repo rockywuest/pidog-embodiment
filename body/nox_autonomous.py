@@ -25,9 +25,9 @@ import traceback
 # ─── Config ───
 DAEMON_HOST = "localhost"
 DAEMON_PORT = 9999
-PERCEPTION_INTERVAL = 3.0   # Seconds between camera checks
-SENSOR_INTERVAL = 0.5       # Seconds between sensor polls
-IDLE_TIMEOUT = 30.0         # Seconds before idle behavior
+PERCEPTION_INTERVAL = 5.0   # Seconds between camera checks
+SENSOR_INTERVAL = 2.0       # Seconds between sensor polls (was 0.5 — too aggressive for Pi 4)
+IDLE_TIMEOUT = 60.0         # Seconds before idle behavior
 FACE_TRACK_SPEED = 60       # Head tracking speed
 
 # Battery thresholds

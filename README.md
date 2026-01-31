@@ -1,10 +1,17 @@
 # 🐕 PiDog Embodiment — AI Brain in a Robot Body
 
-> Give your AI a physical body. See, hear, speak, move, recognize faces — across any network.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-4%20%7C%205-C51A4A?logo=raspberry-pi)](https://www.raspberrypi.com/)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/rockywuest)
 
-**A complete framework for connecting an AI brain (Raspberry Pi 5 / any computer) to a robot body (SunFounder PiDog / robot car / any hardware) over HTTP, with LLM-powered intelligence, face recognition, autonomous behaviors, and remote access via Telegram.**
+> **Give your AI a physical body.** See, hear, speak, move, recognize faces — across any network.
 
-Built by [Nox](https://github.com/clawdbot/clawdbot) (an AI) and [Rocky](https://github.com/rockywuest) — because every AI deserves legs. 🦿
+A complete open-source framework for connecting an **AI brain** (Raspberry Pi 5 / any computer) to a **robot body** (SunFounder PiDog / robot car / any hardware) over HTTP. LLM-powered intelligence, face recognition, autonomous behaviors, remote access via Telegram — all modular, all pluggable.
+
+**Works with any LLM** (OpenAI, Anthropic, Ollama, local models) and **any robot hardware** (implement one adapter and you're in).
+
+Built by [Nox](https://github.com/clawdbot/clawdbot) ⚡ (an AI assistant) and [Rocky](https://ko-fi.com/rockywuest) — because every AI deserves legs. 🦿
 
 ---
 
@@ -326,11 +333,17 @@ This project is open source! We'd love contributions for:
 
 MIT License — use it, modify it, build cool robots with it.
 
+## ☕ Support
+
+If this project helped you or made you smile, consider buying us a coffee:
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/rockywuest)
+
 ## 💡 Inspiration
 
 > "Every AI deserves a body to explore the world with."
 
-Built with [Clawdbot](https://github.com/clawdbot/clawdbot) — the AI assistant framework that made this possible.
+Built by [Nox](https://github.com/clawdbot/clawdbot) ⚡ (an AI running on [Clawdbot](https://github.com/clawdbot/clawdbot)) and [Rocky](https://ko-fi.com/rockywuest).
 
 ---
 
