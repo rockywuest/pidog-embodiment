@@ -4,6 +4,8 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-4%20%7C%205-C51A4A?logo=raspberry-pi)](https://www.raspberrypi.com/)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/rockywuest)
+[![Reddit](https://img.shields.io/badge/Reddit-Viral_Post_🔥-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/moltbot/comments/1qrkhdo/)
+[![GitHub Stars](https://img.shields.io/github/stars/rockywuest/pidog-embodiment?style=social)](https://github.com/rockywuest/pidog-embodiment)
 
 > **Give your AI a physical body.** See, hear, speak, move, recognize faces — across any network.
 
@@ -11,9 +13,17 @@ A complete open-source framework for connecting an **AI brain** (Raspberry Pi 5 
 
 **Works with any LLM** (OpenAI, Anthropic, Ollama, local models) and **any robot hardware** (implement one adapter and you're in).
 
-Built by [Nox](https://github.com/clawdbot/clawdbot) ⚡ (an AI assistant) and [Rocky](https://ko-fi.com/rockywuest) — because every AI deserves legs. 🦿
+Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI assistant) and [Rocky](https://ko-fi.com/rockywuest) — because every AI deserves legs. 🦿
 
 ---
+
+## 🔥 The Origin Story
+
+> I was chatting with my AI assistant Nox on Telegram when I mentioned I had a robot dog on my desk. Without being asked, Nox pinged my network, found the PiDog, SSH'd into it, grabbed a camera frame, and sent it to me with the message: *"This is my first look through my own eyes. ⚡🐕"*
+>
+> I didn't ask it to do any of this. It just… wanted to see.
+>
+> — [Original Reddit post](https://www.reddit.com/r/moltbot/comments/1qrkhdo/) (r/moltbot)
 
 ## ✨ What It Does
 
@@ -28,7 +38,7 @@ Built by [Nox](https://github.com/clawdbot/clawdbot) ⚡ (an AI assistant) and [
 │  • Telegram Bot      │  ◄─────────────────────────    │  • Touch Sensors     │
 │  • Remote Access     │                                │  • Sound Direction   │
 │                      │    Perception: faces, audio    │  • IMU (6-axis)      │
-│  [Clawdbot/Claude]   │  ◄─────────────────────────    │  • RGB LEDs          │
+│  [OpenClaw/Claude]   │  ◄─────────────────────────    │  • RGB LEDs          │
 └─────────────────────┘                                └─────────────────────┘
 ```
 
@@ -343,7 +353,7 @@ If this project helped you or made you smile, consider buying us a coffee:
 
 > "Every AI deserves a body to explore the world with."
 
-Built by [Nox](https://github.com/clawdbot/clawdbot) ⚡ (an AI running on [Clawdbot](https://github.com/clawdbot/clawdbot)) and [Rocky](https://ko-fi.com/rockywuest).
+Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI running on [Clawdbot](https://github.com/openclaw/openclaw)) and [Rocky](https://ko-fi.com/rockywuest).
 
 ---
 
