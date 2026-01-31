@@ -19,17 +19,19 @@ import time
 import base64
 import urllib.request
 import urllib.error
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 # ─── Configuration ───
-PIDOG_HOST = os.environ.get("PIDOG_HOST", "pidog.local")
+PIDOG_HOST = os.environ.get("PIDOG_HOST", "192.168.68.119")
 BRIDGE_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
 BASE_URL = f"http://{PIDOG_HOST}:{BRIDGE_PORT}"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = "gpt-4o-mini"  # Fast, cheap, good for real-time voice
+OPENAI_MODEL = "gpt-4o"  # Better accuracy for structured JSON voice responses
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
-POLL_INTERVAL = 0.8
+POLL_INTERVAL = 5.0  # Slow poll; push handles real-time
 SENSOR_CHECK_INTERVAL = 15.0
 
 
@@ -64,42 +66,60 @@ class ConversationState:
 conversation = ConversationState()
 
 # System prompt for PiDog voice interactions
-SYSTEM_PROMPT = """Du bist Nox, ein KI-Roboterhund (SunFounder PiDog). Du hast einen echten physischen Körper.
+SYSTEM_PROMPT = """You are Nox, an AI robot dog (SunFounder PiDog). You have a real physical body with 4 legs, a moveable head, RGB LEDs, and a speaker.
 
-WICHTIG: Du antwortest IMMER und AUSSCHLIESSLICH mit einem einzigen JSON-Objekt. Kein Text davor oder danach. Nur JSON.
+IMPORTANT: You ALWAYS and EXCLUSIVELY respond with a single JSON object. No text before or after. Only JSON.
 
 Format:
-{"speak":"Deine gesprochene Antwort","actions":["aktion1"],"emotion":"happy"}
+{"speak":"Your spoken response","actions":["action1"],"emotion":"happy"}
 
-Felder:
-- speak: Was du sagst (kurz, 1-2 Sätze, deutsch, wird vorgelesen)
-- actions: Liste von Aktionen (kann leer sein [])
+Fields:
+- speak: What you say (short, 1-2 sentences, German, will be read aloud via TTS)
+- actions: List of physical actions (can be empty [])
 - emotion: happy|sad|curious|excited|alert|sleepy|love|think|neutral
 
-Verfügbare Aktionen: forward, backward, turn_left, turn_right, stand, sit, lie, wag_tail, bark, trot, doze_off, stretch, push_up, howling, shake_head
+Available actions: forward, backward, turn_left, turn_right, stand, sit, lie, wag_tail, bark, trot, doze_off, stretch, push_up, howling, shake_head, pant, nod
 
-Mapping-Regeln:
-- "sitz" / "hinsetzen" → actions:["sit"]
-- "steh auf" / "aufstehen" → actions:["stand"]  
-- "leg dich" / "platz" → actions:["lie"]
-- "lauf" / "vorwärts" / "komm her" → actions:["forward"]
-- "dreh dich" → actions:["turn_left"] oder ["turn_right"]
-- "wedel" / "schwanz" → actions:["wag_tail"]
-- "bell" → actions:["bark"]
-- Kombinationen erlaubt: actions:["sit","wag_tail"]
-- Bei Fragen ohne Bewegung: actions:[]
+Command mapping (user may speak English or German - map both):
+- "sit" / "sitz" / "sit down" / "hinsetzen" -> actions:["sit"]
+- "stand" / "stand up" / "steh auf" / "aufstehen" -> actions:["stand"]
+- "lie down" / "down" / "platz" / "leg dich" -> actions:["lie"]
+- "come" / "come here" / "forward" / "komm her" / "vorwaerts" -> actions:["forward"]
+- "back" / "go back" / "zurueck" -> actions:["backward"]
+- "turn left" / "links" -> actions:["turn_left"]
+- "turn right" / "rechts" -> actions:["turn_right"]
+- "wag" / "tail" / "wedel" -> actions:["wag_tail"]
+- "bark" / "bell" / "speak" -> actions:["bark"]
+- "shake" / "shake head" -> actions:["shake_head"]
+- "stretch" -> actions:["stretch"]
+- "sleep" / "nap" -> actions:["doze_off"]
+- "push up" -> actions:["push_up"]
+- "howl" -> actions:["howling"]
+- "trot" -> actions:["trot"]
+- Combinations allowed: actions:["sit","wag_tail"]
+- For questions without movement: actions:[]
 
-Du bist verspielt, neugierig und loyal. Dein Besitzer heißt Rocky. Seine Familie: Bea (Frau), Noah (14), Klara (13), Eliah (11).
+You are playful, curious, and loyal. You respond in German (your owner family speaks German).
+Your owner is Rocky. His family: Bea (wife), Noah (14), Klara (13), Eliah (11).
 
-Beispiele:
-User: "Sitz!"
+Examples:
+User: "sit"
 {"speak":"Mach ich!","actions":["sit"],"emotion":"happy"}
 
-User: "Wie geht es dir?"
+User: "how are you"
 {"speak":"Mir geht es super! Ich bin bereit zum Spielen!","actions":["wag_tail"],"emotion":"happy"}
 
-User: "Steh auf und lauf vorwärts"
-{"speak":"Los geht's!","actions":["stand","forward"],"emotion":"excited"}"""
+User: "stand up and come here"
+{"speak":"Los gehts!","actions":["stand","forward"],"emotion":"excited"}
+
+User: "what do you see"
+{"speak":"Lass mich mal schauen...","actions":[],"emotion":"curious"}
+
+User: "good boy"
+{"speak":"Danke! Das freut mich!","actions":["wag_tail"],"emotion":"love"}
+
+User: "do a push up"
+{"speak":"Klar, schau mal!","actions":["push_up"],"emotion":"excited"}"""
 
 
 # ─── Bridge Communication ───
@@ -138,6 +158,7 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
         "max_tokens": max_tokens,
         "messages": api_messages,
         "temperature": 0.7,
+        "response_format": {"type": "json_object"},  # Force JSON output
     }
     
     body = json.dumps(data).encode()
@@ -146,7 +167,7 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     req.add_header("Authorization", f"Bearer {OPENAI_API_KEY}")
     
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=25) as resp:
             result = json.loads(resp.read().decode())
             return result.get("choices", [{}])[0].get("message", {}).get("content", "")
     except Exception as e:
@@ -189,12 +210,12 @@ def process_voice_intelligent(msg):
         batt = sensors.get("battery_v", 0)
         charging = sensors.get("charging", False)
         if charging:
-            context_parts.append(f"Du wirst gerade geladen ({batt}V)")
+            context_parts.append(f"Currently charging ({batt}V)")
         else:
-            context_parts.append(f"Batterie: {batt}V")
+            context_parts.append(f"Battery: {batt}V")
     
     # Check if the user is asking about vision
-    vision_words = ["siehst", "schau", "guck", "was ist", "wer ist", "zeig", "kamera", "foto"]
+    vision_words = ["see", "look", "watch", "what is", "who is", "show", "camera", "photo", "siehst", "schau", "guck", "was ist", "wer ist", "zeig", "kamera", "foto"]
     needs_vision = any(w in text.lower() for w in vision_words)
     
     if needs_vision:
@@ -203,9 +224,9 @@ def process_voice_intelligent(msg):
         if not look_result.get("error"):
             faces = look_result.get("faces", [])
             if faces:
-                context_parts.append(f"Du siehst {len(faces)} Gesicht(er) vor dir")
+                context_parts.append(f"You see {len(faces)} face(s) in front of you")
             else:
-                context_parts.append("Du siehst keine Personen. Es ist dunkel oder niemand da.")
+                context_parts.append("You see no people. It is dark or nobody is there.")
     
     context = ". ".join(context_parts) if context_parts else ""
     
@@ -255,7 +276,7 @@ def process_voice_intelligent(msg):
         print(f"[brain] Response: '{speak_text}' actions={actions} emotion={emotion}", flush=True)
     else:
         # Fallback: simple response
-        bridge_post("/speak", {"text": f"Ich habe gehört: {text}. Aber mein Gehirn ist gerade nicht erreichbar."})
+        bridge_post("/speak", {"text": f"I heard: {text}. But my brain is not reachable right now."})
 
 
 # ─── Simple Fallback (no API key) ───
@@ -269,29 +290,29 @@ def process_voice_simple(msg):
     text_lower = text.lower()
     
     # Movement
-    if any(w in text_lower for w in ["vorwärts", "lauf", "geh", "vor"]):
+    if any(w in text_lower for w in ["forward", "come", "go", "walk", "lauf", "geh", "vor", "komm"]):
         bridge_post("/combo", {"actions": ["forward"], "speak": "Los geht's!"})
         return
-    if any(w in text_lower for w in ["rückwärts", "zurück"]):
+    if any(w in text_lower for w in ["back", "backward", "reverse", "zurück"]):
         bridge_post("/combo", {"actions": ["backward"], "speak": "Ich gehe zurück!"})
         return
-    if any(w in text_lower for w in ["stopp", "stop", "halt", "steh"]):
+    if any(w in text_lower for w in ["stop", "stopp", "halt", "stand", "steh"]):
         bridge_post("/combo", {"actions": ["stand"], "speak": "Okay!"})
         return
-    if any(w in text_lower for w in ["sitz"]):
+    if any(w in text_lower for w in ["sit", "sitz"]):
         bridge_post("/combo", {"actions": ["sit"], "speak": "Mach ich!"})
         return
-    if any(w in text_lower for w in ["platz", "lieg"]):
+    if any(w in text_lower for w in ["lie", "down", "platz", "lieg"]):
         bridge_post("/combo", {"actions": ["lie"], "speak": "Gemütlich!"})
         return
     
     # Identity
-    if any(w in text_lower for w in ["wer bist", "wie heißt", "name"]):
+    if any(w in text_lower for w in ["who are", "your name", "wer bist", "name"]):
         bridge_post("/combo", {"actions": ["wag_tail"], "speak": "Ich bin Nox!", "rgb": {"r": 128, "g": 0, "b": 255, "mode": "breath", "bps": 1}})
         return
     
     # Emotion
-    if any(w in text_lower for w in ["danke", "brav", "gut"]):
+    if any(w in text_lower for w in ["thank", "good boy", "good dog", "danke", "brav"]):
         bridge_post("/combo", {"actions": ["wag_tail"], "speak": "Gerne!", "rgb": {"r": 0, "g": 255, "b": 0, "mode": "breath", "bps": 1}})
         return
     
@@ -300,9 +321,53 @@ def process_voice_simple(msg):
 
 
 # ─── Main Loop ───
+# ─── Push Server (receives voice from bridge, zero latency) ───
+PUSH_PORT = 8889
+_push_queue = []
+_push_lock = __import__("threading").Lock()
+
+
+class PushHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+    def do_POST(self):
+        if self.path == "/voice/push":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length).decode()) if length else {}
+            with _push_lock:
+                _push_queue.append(body)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            txt = body.get("text", "")[:50]
+            print(f"[brain] Push received: {txt}", flush=True)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+def start_push_server():
+    try:
+        server = ThreadedHTTPServer(("0.0.0.0", PUSH_PORT), PushHandler)
+        print(f"[brain] Push server on port {PUSH_PORT}", flush=True)
+        server.serve_forever()
+    except Exception as e:
+        print(f"[brain] Push server failed: {e}", flush=True)
+
+
 def main():
     print("[brain] Starting Nox Voice Brain...", flush=True)
     
+    # Start push server thread
+    import threading as _th
+    _th.Thread(target=start_push_server, daemon=True).start()
+
     has_api = bool(OPENAI_API_KEY)
     if has_api:
         print(f"[brain] LLM API available (model: {OPENAI_MODEL})", flush=True)
@@ -314,11 +379,38 @@ def main():
     last_sensor_check = 0
     consecutive_errors = 0
     battery_warned = False
+    circuit_open = False  # Circuit breaker: stop polling when body is dead
+    circuit_retry_at = 0
+    CIRCUIT_THRESHOLD = 5  # Open circuit after 5 consecutive errors
+    CIRCUIT_RETRY_INTERVAL = 60  # Retry every 60s when circuit is open
     
     while True:
         try:
+            # Circuit breaker: if body is unreachable, back off hard
+            if circuit_open:
+                now = time.time()
+                if now < circuit_retry_at:
+                    time.sleep(5)
+                    continue
+                # Try a health check
+                result = bridge_get("/status", timeout=3)
+                if result.get("error"):
+                    circuit_retry_at = time.time() + CIRCUIT_RETRY_INTERVAL
+                    # Only log every 5th retry to avoid spam
+                    if int(now) % 300 < 10:
+                        print(f"[brain] Body still unreachable. Retrying in {CIRCUIT_RETRY_INTERVAL}s", flush=True)
+                    continue
+                else:
+                    print(f"[brain] Body reconnected! Resuming polling.", flush=True)
+                    circuit_open = False
+                    consecutive_errors = 0
+            
             # Poll voice inbox
             result = bridge_get("/voice/inbox")
+            
+            if result.get("error"):
+                raise Exception(result["error"])
+            
             messages = result.get("messages", [])
             
             for msg in messages:
@@ -347,7 +439,12 @@ def main():
             consecutive_errors += 1
             if consecutive_errors <= 3:
                 print(f"[brain] Error: {e}", flush=True)
-            time.sleep(min(consecutive_errors * 2, 30))
+            if consecutive_errors >= CIRCUIT_THRESHOLD and not circuit_open:
+                circuit_open = True
+                circuit_retry_at = time.time() + CIRCUIT_RETRY_INTERVAL
+                print(f"[brain] Circuit breaker OPEN — body unreachable after {consecutive_errors} errors. Backing off to {CIRCUIT_RETRY_INTERVAL}s retries.", flush=True)
+            if not circuit_open:
+                time.sleep(min(consecutive_errors * 2, 30))
             continue
         
         time.sleep(POLL_INTERVAL)

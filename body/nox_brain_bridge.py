@@ -19,6 +19,7 @@ import base64
 import socket
 import threading
 import traceback
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from pathlib import Path
@@ -28,12 +29,31 @@ LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8888
 DAEMON_HOST = "localhost"
 DAEMON_PORT = 9999
+
+# Brain callback (push voice to brain instead of waiting for poll)
+BRAIN_HOST = "192.168.68.101"
+BRAIN_CALLBACK_PORT = 8889
 PHOTO_DIR = "/tmp"
 FACE_DB_DIR = "/home/pidog/nox_face_db"
 PERCEPTION_INTERVAL = 2.0  # seconds between auto-perception cycles
 
 # Ensure directories exist
 os.makedirs(FACE_DB_DIR, exist_ok=True)
+
+# ─── Brain Push (zero-latency voice delivery) ───
+def push_to_brain(data, timeout=5):
+    """Push voice input directly to brain (no polling delay)."""
+    try:
+        url = f"http://{BRAIN_HOST}:{BRAIN_CALLBACK_PORT}/voice/push"
+        body = json.dumps(data).encode()
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"[bridge] Brain push failed: {e}", flush=True)
+        return None
+
 
 # ─── Daemon Communication ───
 def send_to_daemon(cmd_json, timeout=30):
@@ -65,6 +85,7 @@ class PerceptionState:
         self.last_photo_b64 = None
         self.voice_inbox = []    # Pending voice messages
         self.voice_outbox = []   # Pending voice responses
+        self.tts_echo_until = 0  # Timestamp when TTS will finish (for echo suppression)
     
     def update(self, **kwargs):
         with self.lock:
@@ -136,55 +157,107 @@ class FaceDB:
 face_db = FaceDB(FACE_DB_DIR)
 
 
+# ─── Face Recognition Engine (SCRFD + ArcFace) ───
+_face_engine = None
+
+def get_face_engine():
+    """Lazy-load the SCRFD+ArcFace face engine to save memory until first use."""
+    global _face_engine
+    if _face_engine is None:
+        try:
+            from nox_face_recognition import FaceEngine
+            _face_engine = FaceEngine(
+                model_dir="/home/pidog/models",
+                db_dir="/home/pidog/face_db"
+            )
+            print("[bridge] SCRFD+ArcFace face engine loaded", flush=True)
+        except Exception as e:
+            print(f"[bridge] Face engine failed, falling back to Haar: {e}", flush=True)
+            _face_engine = "fallback"
+    return _face_engine
+
+
 # ─── Camera & Detection (runs on PiDog) ───
 def capture_and_detect():
     """Capture a photo and run local detections.
-    
+
+    Uses SCRFD+ArcFace (nox_face_recognition.py) for detection and identification.
+    Falls back to Haar Cascade if ONNX models fail to load.
+
     Returns dict with photo path, face detections, object detections.
     """
     result = {"ts": time.time()}
-    
+
     # Take photo via daemon
     photo_result = send_to_daemon({"cmd": "photo"})
     if not photo_result.get("ok"):
         result["error"] = f"photo failed: {photo_result.get('error', 'unknown')}"
         return result
-    
+
     photo_path = photo_result.get("photo", "/tmp/nox_snap.jpg")
     result["photo_path"] = photo_path
-    
+
     # Read photo as base64
     try:
         with open(photo_path, "rb") as f:
             result["photo_b64"] = base64.b64encode(f.read()).decode()
     except:
         result["photo_b64"] = None
-    
-    # Run face detection using OpenCV (lightweight, already available)
+
+    # Face detection + identification
     try:
         import cv2
         img = cv2.imread(photo_path)
-        if img is not None:
+        if img is None:
+            result["faces"] = []
+            result["face_count"] = 0
+            return result
+
+        engine = get_face_engine()
+        face_list = []
+
+        if engine and engine != "fallback":
+            # Use SCRFD+ArcFace engine (detect + identify)
+            faces = engine.identify(img)
+            for f in faces:
+                bbox = f.get("bbox", [0, 0, 0, 0])
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                w, h = x2 - x1, y2 - y1
+                face_data = {
+                    "x": int(x1 + w // 2),
+                    "y": int(y1 + h // 2),
+                    "w": w,
+                    "h": h,
+                    "name": f.get("name", "unknown"),
+                    "confidence": round(f.get("confidence", 0.0), 3),
+                    "det_score": round(f.get("score", 0.0), 3),
+                }
+                # Crop face
+                face_crop = img[max(0, y1):y2, max(0, x1):x2]
+                if face_crop.size > 0:
+                    crop_path = f"/tmp/face_crop_{len(face_list)}.jpg"
+                    cv2.imwrite(crop_path, face_crop)
+                    face_data["crop_path"] = crop_path
+                    face_data["crop_b64"] = base64.b64encode(
+                        cv2.imencode('.jpg', face_crop)[1]
+                    ).decode()
+                face_list.append(face_data)
+        else:
+            # Fallback: Haar Cascade (no identification, only detection)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            
-            # Face detection
             face_cascade = cv2.CascadeClassifier(
                 '/opt/vilib/haarcascade_frontalface_default.xml'
             )
             faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-            
-            face_list = []
             for (x, y, w, h) in faces:
                 face_data = {
-                    "x": int(x + w//2),
-                    "y": int(y + h//2),
+                    "x": int(x + w // 2),
+                    "y": int(y + h // 2),
                     "w": int(w),
                     "h": int(h),
                     "name": "unknown",
-                    "confidence": 0.0
+                    "confidence": 0.0,
                 }
-                
-                # Crop face for potential identification
                 face_crop = img[y:y+h, x:x+w]
                 crop_path = f"/tmp/face_crop_{len(face_list)}.jpg"
                 cv2.imwrite(crop_path, face_crop)
@@ -192,15 +265,14 @@ def capture_and_detect():
                 face_data["crop_b64"] = base64.b64encode(
                     cv2.imencode('.jpg', face_crop)[1]
                 ).decode()
-                
                 face_list.append(face_data)
-            
-            result["faces"] = face_list
-            result["face_count"] = len(face_list)
+
+        result["faces"] = face_list
+        result["face_count"] = len(face_list)
     except Exception as e:
         result["face_error"] = str(e)
         result["faces"] = []
-    
+
     return result
 
 
@@ -295,7 +367,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 msgs = list(perception.voice_inbox)
                 perception.voice_inbox.clear()
             self._send_json({"messages": msgs})
+
         
+        elif path == "/voice/echo_until":
+            # Return when TTS echo suppression should end
+            self._send_json({"echo_until": perception.tts_echo_until})
+
         else:
             self._send_json({"error": f"unknown path: {path}"}, 404)
     
@@ -365,19 +442,33 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(r)
         
         elif path == "/face/register":
-            # Register a face: take photo, crop face, store
+            # Register a face: take photo, detect, store embedding
             name = body.get("name", "")
             if not name:
                 self._send_json({"error": "name required"}, 400)
                 return
-            
+
             # Take photo
             result = capture_and_detect()
             if result.get("face_count", 0) == 0:
                 self._send_json({"error": "no face detected"}, 400)
                 return
-            
-            # Register first detected face
+
+            # Try SCRFD+ArcFace engine for embedding-based registration
+            engine = get_face_engine()
+            if engine and engine != "fallback" and engine.recognizer:
+                try:
+                    photo_path = result.get("photo_path", "/tmp/nox_snap.jpg")
+                    reg_result = engine.register(name, photo_path)
+                    if reg_result.get("ok"):
+                        reg_result["method"] = "embedding"
+                        reg_result["known_faces"] = engine.list_known()
+                        self._send_json(reg_result)
+                        return
+                except Exception as e:
+                    print(f"[bridge] Embedding registration failed: {e}", flush=True)
+
+            # Fallback: image-based registration via FaceDB
             face = result["faces"][0]
             crop_path = face.get("crop_path")
             if crop_path and os.path.exists(crop_path):
@@ -405,12 +496,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # Voice loop reports new speech input
             text = body.get("text", "")
             if text:
+                msg = {
+                    "text": text,
+                    "ts": time.time(),
+                    "source": "voice"
+                }
+                # Push to brain immediately (non-blocking)
+                threading.Thread(
+                    target=push_to_brain,
+                    args=(msg,),
+                    daemon=True
+                ).start()
+                # Also store in inbox as fallback
                 with perception.lock:
-                    perception.voice_inbox.append({
-                        "text": text,
-                        "ts": time.time(),
-                        "source": "voice"
-                    })
+                    perception.voice_inbox.append(msg)
                 self._send_json({"ok": True})
             else:
                 self._send_json({"error": "no text"}, 400)
@@ -447,10 +546,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     daemon=True
                 )
                 t.start()
-                results.append({"ok": True, "spoke": speak_text, "async": True})
+                # Smart echo suppression: estimate when TTS will finish
+                # Piper TTS: ~80ms/char for German + 1s buffer
+                est_tts_end = time.time() + len(speak_text) * 0.08 + 1.5
+                perception.tts_echo_until = est_tts_end
+                results.append({"ok": True, "spoke": speak_text, "async": True, "echo_until": est_tts_end})
             
             self._send_json({"ok": True, "results": results})
         
+        elif path == "/voice/echo_until":
+            # Return when TTS echo suppression should end
+            self._send_json({"echo_until": perception.tts_echo_until})
+
         else:
             self._send_json({"error": f"unknown path: {path}"}, 404)
 
@@ -475,11 +582,18 @@ def main():
     if not os.environ.get("NOX_NO_AUTO"):
         try:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from nox_autonomous import start_autonomous
-            auto_state = start_autonomous()
-            print("[bridge] Autonomous behavior active", flush=True)
+            from nox_autonomous_v2 import AutonomousBehavior
+            auto = AutonomousBehavior(daemon_send_fn=send_to_daemon)
+            auto.start()
+            print("[bridge] Autonomous behavior v2 (mood system) active", flush=True)
         except Exception as e:
-            print(f"[bridge] Autonomous behavior skipped: {e}", flush=True)
+            print(f"[bridge] Auto v2 failed, trying v1: {e}", flush=True)
+            try:
+                from nox_autonomous import start_autonomous
+                start_autonomous()
+                print("[bridge] Autonomous behavior v1 active (fallback)", flush=True)
+            except Exception as e2:
+                print(f"[bridge] Autonomous behavior skipped: {e2}", flush=True)
     else:
         print("[bridge] Autonomous behavior disabled (NOX_NO_AUTO=1)", flush=True)
     

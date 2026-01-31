@@ -1,0 +1,12 @@
+[Unit]
+Description=Nox WiFi Watchdog (keeps PiDog online)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /home/pidog/wifi_watchdog.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
