@@ -15,15 +15,60 @@ import threading
 import traceback
 from pathlib import Path
 
-# Audio config for HifiBerry DAC
+# Audio config for HifiBerry DAC (auto-detect card number)
 os.environ["SDL_AUDIODRIVER"] = "alsa"
-os.environ["AUDIODEV"] = "plughw:4,0"
+
+def _find_hifiberry_card():
+    """Auto-detect HifiBerry DAC ALSA card number."""
+    import subprocess as _sp
+    try:
+        result = _sp.run(["aplay", "-l"], capture_output=True, text=True, timeout=5)
+        for line in result.stdout.splitlines():
+            if "hifiberry" in line.lower() and "card" in line.lower():
+                card = line.split("card ")[1].split(":")[0]
+                print(f"[nox] HifiBerry DAC found at card {card}", flush=True)
+                return f"plughw:{card},0"
+    except Exception as e:
+        print(f"[nox] HifiBerry detection error: {e}", flush=True)
+    # Fallback: try card 3 (typical Pi 4 with HifiBerry)
+    print("[nox] HifiBerry not found, falling back to plughw:3,0", flush=True)
+    return "plughw:3,0"
+
+_PLAYBACK_DEVICE = _find_hifiberry_card()
+os.environ["AUDIODEV"] = _PLAYBACK_DEVICE
 
 SOCKET_PATH = "/tmp/nox.sock"
 PHOTO_DIR = "/tmp"
 PIPER_BIN = "/home/pidog/.local/bin/piper"
 PIPER_MODEL = "/home/pidog/.local/share/piper-voices/de_DE-thorsten-high.onnx"
 SOUNDS_DIR = "/home/pidog/pidog/sounds"
+
+# ─── Ultrasonic distance sensor (separate from PiDog to avoid Process hang) ───
+ultrasonic = None
+ultrasonic_distance = -1.0
+ultrasonic_lock = threading.Lock()
+
+def _ultrasonic_bg_thread():
+    """Background thread to continuously read ultrasonic distance."""
+    global ultrasonic, ultrasonic_distance
+    from robot_hat import Pin as RHPin
+    from robot_hat.modules import Ultrasonic as US
+    import time as t2
+    try:
+        echo = RHPin("D0")
+        trig = RHPin("D1")
+        us = US(trig, echo, timeout=0.02)
+        print("[nox] Ultrasonic sensor initialized! ✅", flush=True)
+        while True:
+            try:
+                d = us.read(times=3)
+                with ultrasonic_lock:
+                    ultrasonic_distance = d if d > 0 else -1.0
+            except:
+                pass
+            t2.sleep(0.1)  # 10Hz reading
+    except Exception as e:
+        print(f"[nox] Ultrasonic init failed: {e}", flush=True)
 
 # ─── Patch: Skip ultrasonic to prevent init hang ───
 import pidog.pidog as _pidog_mod
@@ -49,6 +94,55 @@ camera_lock = threading.Lock()
 dog_lock = threading.Lock()
 running = True
 
+# ─── Servo Idle Management ───
+_last_activity = time.time()
+_idle_state = "active"  # active -> resting -> sleeping
+IDLE_REST_SECS = 60    # lie down after 60s idle
+IDLE_SLEEP_SECS = 120  # disable servos after 120s idle
+def _is_sleep_hours():
+    """Check if current time is in sleep hours (23:30-06:30)."""
+    from datetime import datetime
+    now = datetime.now()
+    hour, minute = now.hour, now.minute
+    if hour == 23 and minute >= 30:
+        return True
+    if hour < 7:
+        if hour < 6 or (hour == 6 and minute <= 30):
+            return True
+    return False
+
+
+
+def _mark_activity():
+    global _last_activity, _idle_state
+    _last_activity = time.time()
+    if _idle_state != "active":
+        _idle_state = "active"
+        print(f"[nox] Activity detected, waking up", flush=True)
+
+def _idle_watchdog():
+    global _idle_state
+    while running:
+        elapsed = time.time() - _last_activity
+        if _idle_state == "active" and elapsed > IDLE_REST_SECS:
+            _idle_state = "resting"
+            print(f"[nox] Idle {int(elapsed)}s → lying down to save servos", flush=True)
+            try:
+                with dog_lock:
+                    dog.do_action("lie", speed=50)
+                    dog.rgb_strip.set_mode("breath", [0, 0, 0] if _is_sleep_hours() else [0, 0, 80], bps=0.3)
+            except Exception as e:
+                print(f"[nox] Idle lie failed: {e}", flush=True)
+        elif _idle_state == "resting" and elapsed > IDLE_SLEEP_SECS:
+            _idle_state = "sleeping"
+            print(f"[nox] Idle {int(elapsed)}s → deep sleep (LEDs dimmed)", flush=True)
+            try:
+                with dog_lock:
+                    dog.rgb_strip.set_mode("breath", [0, 0, 0] if _is_sleep_hours() else [0, 0, 15], bps=0.15)
+            except Exception as e:
+                print(f"[nox] Deep sleep failed: {e}", flush=True)
+        time.sleep(5)
+
 
 def init_dog():
     """Initialize PiDog with broken sensors skipped."""
@@ -59,7 +153,23 @@ def init_dog():
     # Wake up
     dog.do_action('stand', speed=60)
     time.sleep(1)
-    dog.rgb_strip.set_mode('breath', [128, 0, 255], bps=0.8)
+    dog.rgb_strip.set_mode('breath', [0, 0, 0] if _is_sleep_hours() else [128, 0, 255], bps=0.8)
+    # Health check: report what's working
+    _hw_status = []
+    if hasattr(dog, 'music') and dog.music is not None:
+        _hw_status.append("audio:pygame")
+    else:
+        _hw_status.append("audio:aplay-fallback")
+    if hasattr(dog, 'pitch'):
+        _hw_status.append("imu:ok")
+    else:
+        _hw_status.append("imu:unavailable")
+    if hasattr(dog, 'dual_touch'):
+        _hw_status.append("touch:ok")
+    if hasattr(dog, 'ears'):
+        _hw_status.append("ears:ok")
+    print(f"[nox] Hardware: {', '.join(_hw_status)}", flush=True)
+    print(f"[nox] Audio device: {_PLAYBACK_DEVICE}", flush=True)
     print("[nox] PiDog ready. Nox lebt! ⚡", flush=True)
 
 
@@ -79,6 +189,10 @@ def cmd_status():
 
 def cmd_move(action, steps=3, speed=80):
     """Execute a movement action."""
+    _mark_activity()
+    if _idle_state == "sleeping":
+        # Re-init servos before moving
+        pass  # PiDog re-enables on do_action
     with dog_lock:
         dog.do_action(action, step_count=int(steps), speed=int(speed))
         time.sleep(1.5)
@@ -87,6 +201,7 @@ def cmd_move(action, steps=3, speed=80):
 
 def cmd_head(yaw=0, roll=0, pitch=0):
     """Move head."""
+    _mark_activity()
     with dog_lock:
         dog.head_move([[float(yaw), float(roll), float(pitch)]], immediately=True, speed=80)
         time.sleep(0.5)
@@ -104,51 +219,140 @@ def cmd_rgb(r=128, g=0, b=255, mode="breath", bps=0.8):
     return {"ok": True, "rgb": [r, g, b], "mode": mode}
 
 
+# ─── Persistent Camera ───
+_camera_ready = False
+_camera_init_lock = threading.Lock()
+
+def _ensure_camera():
+    """Initialize camera once and keep it running."""
+    global _camera_ready
+    if _camera_ready:
+        return True
+    with _camera_init_lock:
+        if _camera_ready:
+            return True
+        try:
+            from vilib import Vilib
+            Vilib.camera_start(vflip=False, hflip=False)
+            time.sleep(2)
+            _camera_ready = True
+            print("[nox] Camera initialized (persistent mode)", flush=True)
+            return True
+        except Exception as e:
+            print(f"[nox] Camera init failed: {e}", flush=True)
+            return False
+
+
 def cmd_photo(path=None):
-    """Take a photo."""
+    """Take a photo using persistent camera."""
     if path is None:
         path = os.path.join(PHOTO_DIR, "nox_snap.jpg")
     basename = os.path.splitext(os.path.basename(path))[0]
     dirname = os.path.dirname(path) or PHOTO_DIR
 
     with camera_lock:
+        if not _ensure_camera():
+            return {"ok": False, "error": "camera not available"}
         from vilib import Vilib
-        Vilib.camera_start(vflip=False, hflip=False)
-        time.sleep(1.5)
         Vilib.take_photo(basename, dirname)
-        Vilib.camera_close()
 
     actual = os.path.join(dirname, basename + ".jpg")
-    return {"ok": True, "photo": actual}
+    if os.path.exists(actual):
+        return {"ok": True, "photo": actual}
+    return {"ok": False, "error": f"photo file not created: {actual}"}
 
 
 def cmd_speak(text):
-    """TTS via Piper."""
-    import subprocess
-    wav = "/tmp/nox_speak.wav"
-    proc = subprocess.run(
-        f'echo "{text}" | {PIPER_BIN} --model {PIPER_MODEL} --output_file {wav}',
-        shell=True, capture_output=True, text=True
-    )
-    if proc.returncode != 0:
-        return {"ok": False, "error": proc.stderr}
-    subprocess.run(["aplay", wav], capture_output=True)
+    """TTS via Piper + aplay/PiDog sound_effect. Fully async to avoid TCP timeout."""
+    _mark_activity()
+    # Guard: empty or whitespace-only text crashes Piper
+    if not text or not text.strip():
+        return {"ok": False, "error": "empty text"}
+
+    def _tts_pipeline(speak_text):
+        import subprocess as sp
+        # Use unique wav per call to avoid race conditions
+        wav = f"/tmp/nox_speak_{int(time.time()*1000) % 100000}.wav"
+        try:
+            safe_text = speak_text.replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
+            proc = sp.run(
+                f'echo "{safe_text}" | {PIPER_BIN} --model {PIPER_MODEL} --output_file {wav}',
+                shell=True, capture_output=True, text=True, timeout=60
+            )
+            if proc.returncode != 0:
+                print(f"[nox] Piper TTS failed: {proc.stderr}", flush=True)
+                return
+            # Play
+            played = False
+            try:
+                with dog_lock:
+                    if hasattr(dog, 'music') and dog.music is not None:
+                        dog.music.sound_play(wav)
+                        played = True
+            except Exception as e:
+                print(f"[nox] pygame playback failed: {e}", flush=True)
+            if not played:
+                try:
+                    sp.run(["aplay", "-D", _PLAYBACK_DEVICE, wav],
+                           capture_output=True, timeout=60)
+                except Exception as e2:
+                    print(f"[nox] aplay also failed: {e2}", flush=True)
+        finally:
+            # Cleanup temp wav (after short delay for playback to finish)
+            try:
+                time.sleep(0.5)
+                os.remove(wav)
+            except:
+                pass
+
+    import threading
+    threading.Thread(target=_tts_pipeline, args=(text,), daemon=True).start()
     return {"ok": True, "spoke": text}
 
 
 def cmd_sound(name):
-    """Play built-in sound."""
+    """Play built-in sound (wav via pygame/aplay, mp3 via ffplay/pygame)."""
     import subprocess
     for ext in ['', '.wav', '.mp3']:
         path = os.path.join(SOUNDS_DIR, name + ext)
         if os.path.exists(path):
-            if path.endswith('.mp3'):
-                subprocess.run(["mpg123", "-q", path], capture_output=True)
-            else:
-                subprocess.run(["aplay", path], capture_output=True)
+            played = False
+            # Try PiDog's pygame mixer first (handles wav and mp3)
+            try:
+                with dog_lock:
+                    if hasattr(dog, 'music') and dog.music is not None:
+                        dog.music.sound_play(path)
+                        played = True
+            except Exception as e:
+                print(f"[nox] pygame sound failed: {e}", flush=True)
+            # Fallback: aplay for wav, ffplay for mp3
+            if not played:
+                try:
+                    if path.endswith('.mp3'):
+                        # Try ffplay (from ffmpeg), mpg123, or sox in order
+                        for player in [["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+                                       ["mpg123", "-q", path],
+                                       ["sox", path, "-d"]]:
+                            try:
+                                subprocess.run(player, capture_output=True, timeout=15)
+                                played = True
+                                break
+                            except FileNotFoundError:
+                                continue
+                    else:
+                        subprocess.run(["aplay", "-D", _PLAYBACK_DEVICE, path],
+                                       capture_output=True, timeout=15)
+                        played = True
+                except Exception as e2:
+                    return {"ok": False, "error": f"playback failed: {e2}"}
+            if not played:
+                return {"ok": False, "error": "no suitable audio player found (install ffmpeg or mpg123)"}
             return {"ok": True, "sound": name}
-    available = os.listdir(SOUNDS_DIR)
-    return {"ok": False, "error": f"not found", "available": available}
+    try:
+        available = [f for f in os.listdir(SOUNDS_DIR) if f.endswith(('.wav', '.mp3'))]
+    except:
+        available = []
+    return {"ok": False, "error": "not found", "available": available}
 
 
 def cmd_combo(sequence):
@@ -168,12 +372,13 @@ def cmd_combo(sequence):
 
 def cmd_wake():
     """Wake up sequence."""
+    _mark_activity()
     with dog_lock:
         dog.do_action('stand', speed=60)
         time.sleep(1)
         dog.do_action('wag_tail', step_count=5, speed=80)
         time.sleep(1)
-        dog.rgb_strip.set_mode('breath', [128, 0, 255], bps=0.8)
+        dog.rgb_strip.set_mode('breath', [0, 0, 0] if _is_sleep_hours() else [128, 0, 255], bps=0.8)
     return {"ok": True}
 
 
@@ -182,7 +387,7 @@ def cmd_sleep():
     with dog_lock:
         dog.do_action('lie', speed=50)
         time.sleep(1)
-        dog.rgb_strip.set_mode('breath', [0, 0, 80], bps=0.3)
+        dog.rgb_strip.set_mode('breath', [0, 0, 0] if _is_sleep_hours() else [0, 0, 80], bps=0.3)
     return {"ok": True}
 
 
@@ -240,12 +445,10 @@ def cmd_sensors():
     except Exception as e:
         result["sound_error"] = str(e)
     
-    # Ultrasonic
-    try:
-        dist = dog.read_distance()
-        result["distance_cm"] = dist if dist > 0 else None
-    except:
-        result["distance_cm"] = None
+    # Ultrasonic (from background thread)
+    with ultrasonic_lock:
+        dist = ultrasonic_distance
+    result["distance_cm"] = round(dist, 1) if dist > 0 else None
     
     # System
     import shutil
@@ -501,6 +704,14 @@ if __name__ == "__main__":
     tcp_thread.start()
 
     print("[nox] All systems go. Waiting for commands...", flush=True)
+    
+    # Start idle watchdog thread
+    idle_thread = threading.Thread(target=_idle_watchdog, daemon=True)
+    idle_thread.start()
+
+    # Start ultrasonic background thread
+    us_thread = threading.Thread(target=_ultrasonic_bg_thread, daemon=True)
+    us_thread.start()
 
     # Keep main thread alive
     try:

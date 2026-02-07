@@ -1,15 +1,20 @@
 [Unit]
-Description=Nox Voice Loop (Wake Word + STT)
-After=network.target nox-body.service
+Description=Nox Voice Loop v2 (PiDog)
+After=nox-body.service nox-bridge.service
+Requires=nox-body.service
 
 [Service]
+EnvironmentFile=/home/pidog/nox.env
 Type=simple
 User=pidog
 WorkingDirectory=/home/pidog
-ExecStart=/usr/bin/python3 -u nox_voice_loop_v2.py
+ExecStart=/usr/bin/python3 -u /home/pidog/nox_voice_loop_v2.py
 Restart=on-failure
-RestartSec=3
+RestartSec=10
+Environment=PATH=/home/pidog/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
+Environment=SDL_AUDIODRIVER=alsa
+Environment=AUDIODEV=plughw:3,0
 
 [Install]
 WantedBy=multi-user.target

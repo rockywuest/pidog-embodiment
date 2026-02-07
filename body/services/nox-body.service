@@ -1,15 +1,19 @@
 [Unit]
-Description=Nox Body Daemon (Hardware Control)
+Description=Nox Body Controller (PiDog)
 After=network.target
 
 [Service]
+EnvironmentFile=/home/pidog/nox.env
 Type=simple
-User=root
+User=pidog
 WorkingDirectory=/home/pidog
-ExecStart=/usr/bin/python3 -u nox_daemon.py
+ExecStart=/usr/bin/python3 -u /home/pidog/nox_daemon.py
 Restart=on-failure
-RestartSec=3
+RestartSec=5
+Environment=PATH=/home/pidog/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
+Environment=SDL_AUDIODRIVER=alsa
+Environment=AUDIODEV=plughw:3,0
 
 [Install]
 WantedBy=multi-user.target

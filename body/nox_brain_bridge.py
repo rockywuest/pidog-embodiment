@@ -31,8 +31,8 @@ DAEMON_HOST = "localhost"
 DAEMON_PORT = 9999
 
 # Brain callback (push voice to brain instead of waiting for poll)
-BRAIN_HOST = "192.168.1.43"
-BRAIN_CALLBACK_PORT = 8889
+BRAIN_HOST = os.environ.get("BRAIN_HOST", "192.168.1.10")
+BRAIN_CALLBACK_PORT = int(os.environ.get("BRAIN_CALLBACK_PORT", "8889"))
 PHOTO_DIR = "/tmp"
 FACE_DB_DIR = "/home/pidog/nox_face_db"
 PERCEPTION_INTERVAL = 2.0  # seconds between auto-perception cycles
@@ -188,8 +188,8 @@ def capture_and_detect():
     """
     result = {"ts": time.time()}
 
-    # Take photo via daemon
-    photo_result = send_to_daemon({"cmd": "photo"})
+    # Take photo via daemon (camera startup needs extra time)
+    photo_result = send_to_daemon({"cmd": "photo"}, timeout=60)
     if not photo_result.get("ok"):
         result["error"] = f"photo failed: {photo_result.get('error', 'unknown')}"
         return result
@@ -571,6 +571,13 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 # ─── Main ───
 def main():
     print(f"[bridge] Starting Nox Brain Bridge on port {LISTEN_PORT}...", flush=True)
+
+    # Pre-import heavy modules to avoid cold-start timeout on first photo
+    try:
+        import cv2
+        print(f"[bridge] OpenCV {cv2.__version__} pre-loaded", flush=True)
+    except ImportError:
+        print("[bridge] WARNING: OpenCV not available — face detection disabled", flush=True)
     
     server = ThreadedHTTPServer((LISTEN_HOST, LISTEN_PORT), BridgeHandler)
     server.timeout = 1.0
