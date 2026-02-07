@@ -20,6 +20,14 @@ import socket
 import threading
 import traceback
 import urllib.request
+import signal
+
+# Memory integration
+try:
+    import pidog_memory
+    _HAS_MEMORY = True
+except ImportError:
+    _HAS_MEMORY = False
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from pathlib import Path
@@ -373,6 +381,28 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # Return when TTS echo suppression should end
             self._send_json({"echo_until": perception.tts_echo_until})
 
+        elif path == "/memory/recent":
+            # Recent memories for brain sync
+            if _HAS_MEMORY:
+                limit = 10
+                try:
+                    qs = self.path.split("?", 1)
+                    if len(qs) > 1:
+                        for p in qs[1].split("&"):
+                            if p.startswith("limit="):
+                                limit = int(p.split("=")[1])
+                except Exception:
+                    pass
+                self._send_json({"memories": pidog_memory.get_recent(limit)})
+            else:
+                self._send_json({"error": "memory not available"}, 503)
+
+        elif path == "/memory/stats":
+            if _HAS_MEMORY:
+                self._send_json(pidog_memory.stats())
+            else:
+                self._send_json({"error": "memory not available"}, 503)
+
         else:
             self._send_json({"error": f"unknown path: {path}"}, 404)
     
@@ -558,6 +588,28 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # Return when TTS echo suppression should end
             self._send_json({"echo_until": perception.tts_echo_until})
 
+        elif path == "/memory/recent":
+            # Recent memories for brain sync
+            if _HAS_MEMORY:
+                limit = 10
+                try:
+                    qs = self.path.split("?", 1)
+                    if len(qs) > 1:
+                        for p in qs[1].split("&"):
+                            if p.startswith("limit="):
+                                limit = int(p.split("=")[1])
+                except Exception:
+                    pass
+                self._send_json({"memories": pidog_memory.get_recent(limit)})
+            else:
+                self._send_json({"error": "memory not available"}, 503)
+
+        elif path == "/memory/stats":
+            if _HAS_MEMORY:
+                self._send_json(pidog_memory.stats())
+            else:
+                self._send_json({"error": "memory not available"}, 503)
+
         else:
             self._send_json({"error": f"unknown path: {path}"}, 404)
 
@@ -604,11 +656,27 @@ def main():
     else:
         print("[bridge] Autonomous behavior disabled (NOX_NO_AUTO=1)", flush=True)
     
+    # Memory session start
+    if _HAS_MEMORY:
+        info = pidog_memory.session_start()
+        print(f"[bridge] Memory: {info['total_memories']} memories loaded ({info['core']} core)", flush=True)
+
+    # Graceful shutdown handler
+    def _shutdown(signum, frame):
+        print(f"[bridge] Signal {signum} received, shutting down...", flush=True)
+        if _HAS_MEMORY:
+            pidog_memory.session_end()
+        server.server_close()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _shutdown)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if _HAS_MEMORY:
+            pidog_memory.session_end()
         server.server_close()
         print("[bridge] Stopped.", flush=True)
 
