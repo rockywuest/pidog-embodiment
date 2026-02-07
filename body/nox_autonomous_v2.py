@@ -9,6 +9,7 @@ NOT just reactive (touch → wag). This is adaptive, contextual behavior:
 - Energy management (battery-aware behavior scaling)
 - Curiosity (investigate sounds, look at movement)
 - Mood system (boredom, excitement, alertness decay over time)
+- Memory integration: events → drift-memory store → co-occurrence over time
 
 Runs as part of the bridge process on PiDog (Pi 4).
 """
@@ -19,55 +20,70 @@ import json
 import threading
 import math
 
+# Try to import memory — graceful fallback if not available
+try:
+    import pidog_memory
+    _HAS_MEMORY = True
+except ImportError:
+    _HAS_MEMORY = False
+    print("[auto-v2] pidog_memory not available — running without memory", flush=True)
+
+
 # ─── Mood System ───
 class MoodState:
     """Tracks PiDog's emotional/energy state over time."""
     
     def __init__(self):
-        self.energy = 0.8        # 0-1: physical energy
-        self.excitement = 0.3    # 0-1: how excited
-        self.curiosity = 0.5     # 0-1: how curious about environment
-        self.boredom = 0.0       # 0-1: increases without stimulation
-        self.alertness = 0.5     # 0-1: how alert to surroundings
-        self.social = 0.5        # 0-1: desire for interaction
+        self.energy = 0.8
+        self.excitement = 0.3
+        self.curiosity = 0.5
+        self.boredom = 0.0
+        self.alertness = 0.5
+        self.social = 0.5
         self.last_interaction = time.time()
         self.last_movement = time.time()
         self.last_sound_heard = 0
         self.last_person_seen = 0
         self.people_nearby = False
-        self.battery_level = 1.0  # 0-1
+        self.battery_level = 1.0
+        self._prev_dominant = None
         
     def update(self, dt_seconds):
         """Natural mood decay/growth over time."""
-        dt = dt_seconds / 60.0  # Convert to minutes
+        dt = dt_seconds / 60.0
         
-        # Boredom increases without stimulation
         time_since_interaction = time.time() - self.last_interaction
-        if time_since_interaction > 120:  # 2 min without interaction
+        if time_since_interaction > 120:
             self.boredom = min(1.0, self.boredom + 0.02 * dt)
         else:
             self.boredom = max(0.0, self.boredom - 0.05 * dt)
         
-        # Excitement decays naturally
         self.excitement = max(0.1, self.excitement - 0.01 * dt)
         
-        # Curiosity rises when bored, drops when stimulated
         if self.boredom > 0.5:
             self.curiosity = min(1.0, self.curiosity + 0.03 * dt)
         
-        # Alertness follows sounds and people
         if time.time() - self.last_sound_heard < 30:
             self.alertness = min(1.0, self.alertness + 0.05 * dt)
         else:
             self.alertness = max(0.2, self.alertness - 0.02 * dt)
         
-        # Social need rises over time without people
         if not self.people_nearby:
             self.social = min(1.0, self.social + 0.01 * dt)
         
-        # Energy tied to battery
         self.energy = self.battery_level * 0.8 + 0.2
         
+    def as_dict(self):
+        """Return mood values as dict (for memory storage)."""
+        return {
+            "energy": round(self.energy, 2),
+            "excitement": round(self.excitement, 2),
+            "curiosity": round(self.curiosity, 2),
+            "boredom": round(self.boredom, 2),
+            "alertness": round(self.alertness, 2),
+            "social": round(self.social, 2),
+        }
+    
     def on_interaction(self):
         self.last_interaction = time.time()
         self.excitement = min(1.0, self.excitement + 0.3)
@@ -79,11 +95,18 @@ class MoodState:
         self.alertness = min(1.0, self.alertness + 0.2)
         self.curiosity = min(1.0, self.curiosity + 0.1)
     
-    def on_touch(self):
+    def on_touch(self, side="unknown"):
         self.on_interaction()
         self.excitement = min(1.0, self.excitement + 0.2)
+        # Store touch event in memory
+        if _HAS_MEMORY:
+            pidog_memory.store_event(
+                "touch",
+                f"Physical interaction: touched on {side}. Excitement rose to {self.excitement:.1f}",
+                mood_state=self.as_dict(),
+            )
     
-    def on_person_detected(self, known=False):
+    def on_person_detected(self, known=False, name=None):
         self.last_person_seen = time.time()
         self.people_nearby = True
         self.social = max(0.0, self.social - 0.3)
@@ -91,6 +114,14 @@ class MoodState:
             self.excitement = min(1.0, self.excitement + 0.4)
         else:
             self.alertness = min(1.0, self.alertness + 0.3)
+        # Store person event in memory
+        if _HAS_MEMORY:
+            who = name or ("known person" if known else "unknown person")
+            pidog_memory.store_event(
+                "person_detected",
+                f"Person detected: {who}. {'Excited!' if known else 'Alert.'}",
+                mood_state=self.as_dict(),
+            )
     
     def on_person_gone(self):
         self.people_nearby = False
@@ -105,12 +136,20 @@ class MoodState:
             "social": self.social if not self.people_nearby else 0,
             "resting": 1.0 - self.energy,
         }
-        return max(moods, key=moods.get)
+        dominant = max(moods, key=moods.get)
+        
+        # Track mood shifts for memory
+        if _HAS_MEMORY and self._prev_dominant and dominant != self._prev_dominant:
+            pidog_memory.store_event(
+                "mood_shift",
+                f"Mood shifted: {self._prev_dominant} -> {dominant}",
+                mood_state=self.as_dict(),
+            )
+        self._prev_dominant = dominant
+        return dominant
 
 
 # ─── Behavior Patterns ───
-# Each pattern is a list of (action, duration) tuples
-
 IDLE_BEHAVIORS = {
     "look_around": [
         {"head": {"yaw": 30, "pitch": 0}},
@@ -163,7 +202,6 @@ IDLE_BEHAVIORS = {
     ],
 }
 
-# Which behaviors fit which moods
 MOOD_BEHAVIORS = {
     "bored": ["yawn_settle", "look_around", "shift_weight", "stretch"],
     "excited": ["tail_wag_gentle", "pant_happy", "look_around"],
@@ -173,7 +211,6 @@ MOOD_BEHAVIORS = {
     "resting": ["yawn_settle", "shift_weight"],
 }
 
-# Mood → RGB mapping
 MOOD_RGB = {
     "bored": {"r": 80, "g": 80, "b": 128, "mode": "breath", "bps": 0.3},
     "excited": {"r": 0, "g": 255, "b": 100, "mode": "breath", "bps": 1.5},
@@ -188,29 +225,22 @@ class AutonomousBehavior:
     """Main autonomous behavior controller."""
     
     def __init__(self, daemon_send_fn, bridge_post_fn=None):
-        """
-        Args:
-            daemon_send_fn: function(cmd_dict) → sends to nox_daemon via TCP
-            bridge_post_fn: function(path, data) → HTTP POST to bridge (optional, for self-use)
-        """
         self.daemon = daemon_send_fn
         self.bridge = bridge_post_fn
         self.mood = MoodState()
         self.running = False
         self._threads = []
         self.last_behavior_time = 0
-        self.min_behavior_interval = 15  # seconds between idle behaviors
+        self.min_behavior_interval = 15
         self.low_battery_mode = False
         
     def start(self):
         self.running = True
         
-        # Sensor monitoring thread
         t1 = threading.Thread(target=self._sensor_loop, daemon=True)
         t1.start()
         self._threads.append(t1)
         
-        # Behavior selection thread
         t2 = threading.Thread(target=self._behavior_loop, daemon=True)
         t2.start()
         self._threads.append(t2)
@@ -227,56 +257,59 @@ class AutonomousBehavior:
         while self.running:
             try:
                 now = time.time()
-                if now - last_check < 2.0:  # Check every 2s
+                if now - last_check < 2.0:
                     time.sleep(0.5)
                     continue
                 
                 last_check = now
                 
-                # Get sensor data from daemon
                 result = self.daemon({"cmd": "sensors"})
                 if not isinstance(result, dict) or result.get("error"):
                     time.sleep(2)
                     continue
 
-                if True:
-                    # Touch — daemon returns "N", "L", "R", or "S" (slide)
-                    touch = result.get("touch", "N")
-                    if isinstance(touch, str) and touch in ("L", "R", "S"):
-                        self.mood.on_touch()
-                        print(f"[auto-v2] Touch detected: {touch}", flush=True)
-                    elif isinstance(touch, dict) and (touch.get("L") or touch.get("R")):
-                        self.mood.on_touch()
-                        print(f"[auto-v2] Touch detected!", flush=True)
+                # Touch
+                touch = result.get("touch", "N")
+                if isinstance(touch, str) and touch in ("L", "R", "S"):
+                    self.mood.on_touch(side=touch)
+                    print(f"[auto-v2] Touch detected: {touch}", flush=True)
+                elif isinstance(touch, dict) and (touch.get("L") or touch.get("R")):
+                    side = "L" if touch.get("L") else "R"
+                    self.mood.on_touch(side=side)
+                    print(f"[auto-v2] Touch detected!", flush=True)
 
-                    # Sound direction
-                    sound = result.get("sound", result.get("sound_direction", {}))
-                    if isinstance(sound, dict) and sound.get("detected"):
-                        direction = sound.get("direction", sound.get("angle", 0))
-                        if direction is None:
-                            direction = 0
-                        self.mood.on_sound(direction)
-                        # Turn head toward sound
-                        # Map 0-360 to yaw range (-45 to 45)
-                        if 0 <= direction <= 180:
-                            yaw = min(45, direction * 0.25)
-                        else:
-                            yaw = max(-45, -(360 - direction) * 0.25)
-                        self.daemon({"cmd": "head", "yaw": int(yaw)})
-                    
-                    # Battery
-                    batt_v = result.get("battery_v", 8.4)
-                    self.mood.battery_level = max(0, min(1.0, (batt_v - 6.0) / 2.4))
-                    
-                    if batt_v < 6.8 and not self.low_battery_mode:
-                        self.low_battery_mode = True
-                        self.daemon({"cmd": "speak", "text": "Meine Batterie wird schwach. Bitte lade mich auf."})
-                        self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
-                        print(f"[auto-v2] LOW BATTERY: {batt_v}V", flush=True)
-                    elif batt_v > 7.2:
-                        self.low_battery_mode = False
+                # Sound direction
+                sound = result.get("sound", result.get("sound_direction", {}))
+                if isinstance(sound, dict) and sound.get("detected"):
+                    direction = sound.get("direction", sound.get("angle", 0))
+                    if direction is None:
+                        direction = 0
+                    self.mood.on_sound(direction)
+                    if 0 <= direction <= 180:
+                        yaw = min(45, direction * 0.25)
+                    else:
+                        yaw = max(-45, -(360 - direction) * 0.25)
+                    self.daemon({"cmd": "head", "yaw": int(yaw)})
                 
-                # Update mood with elapsed time
+                # Battery
+                batt_v = result.get("battery_v", 8.4)
+                self.mood.battery_level = max(0, min(1.0, (batt_v - 6.0) / 2.4))
+                
+                if batt_v < 6.8 and not self.low_battery_mode:
+                    self.low_battery_mode = True
+                    self.daemon({"cmd": "speak", "text": "Meine Batterie wird schwach. Bitte lade mich auf."})
+                    self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
+                    print(f"[auto-v2] LOW BATTERY: {batt_v}V", flush=True)
+                    if _HAS_MEMORY:
+                        pidog_memory.store_event(
+                            "battery_low",
+                            f"Battery critically low: {batt_v}V. Entering low-power mode.",
+                            mood_state=self.mood.as_dict(),
+                            sensor_data={"battery_v": batt_v},
+                        )
+                elif batt_v > 7.2:
+                    self.low_battery_mode = False
+                
                 self.mood.update(2.0)
                 
             except Exception as e:
@@ -289,20 +322,15 @@ class AutonomousBehavior:
             try:
                 now = time.time()
                 
-                # Respect minimum interval
                 if now - self.last_behavior_time < self.min_behavior_interval:
                     time.sleep(1)
                     continue
                 
-                # In low battery mode, minimal behavior
                 if self.low_battery_mode:
                     time.sleep(30)
                     continue
                 
-                # Get dominant mood
                 mood = self.mood.dominant_mood()
-                
-                # Select random behavior for this mood
                 available = MOOD_BEHAVIORS.get(mood, ["look_around"])
                 behavior_name = random.choice(available)
                 behavior = IDLE_BEHAVIORS.get(behavior_name, [])
@@ -315,13 +343,12 @@ class AutonomousBehavior:
                 rgb = MOOD_RGB.get(mood, MOOD_RGB["curious"])
                 self.daemon({"cmd": "rgb", **rgb})
                 
-                # Execute behavior sequence
                 print(f"[auto-v2] Mood: {mood} → Behavior: {behavior_name}", flush=True)
                 
+                # Execute behavior
                 for step in behavior:
                     if not self.running:
                         break
-                    
                     if "wait" in step:
                         time.sleep(step["wait"])
                     elif "action" in step:
@@ -333,7 +360,15 @@ class AutonomousBehavior:
                 
                 self.last_behavior_time = time.time()
                 
-                # Variable interval based on mood
+                # Store behavior execution in memory (throttled by pidog_memory)
+                if _HAS_MEMORY:
+                    pidog_memory.store_observation(
+                        scene=f"Mood: {mood}, behavior: {behavior_name}",
+                        action_taken=behavior_name,
+                        sensor_data={"battery_pct": round(self.mood.battery_level * 100)}
+                    )
+                
+                # Variable interval
                 if mood == "excited":
                     self.min_behavior_interval = 8
                 elif mood == "bored":
@@ -364,6 +399,9 @@ if __name__ == "__main__":
         except Exception as e:
             return {"error": str(e)}
     
+    if _HAS_MEMORY:
+        pidog_memory.session_start()
+    
     auto = AutonomousBehavior(send_to_daemon)
     auto.start()
     
@@ -372,3 +410,5 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         auto.stop()
+        if _HAS_MEMORY:
+            pidog_memory.session_end()
