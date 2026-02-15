@@ -44,34 +44,36 @@ Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI assistant) and [
 
 ### Key Features
 
+- **👁️ Local Vision (NEW)** — SmolVLM-256M runs on-device via llama.cpp. Scene understanding, person/obstacle detection, no cloud needed
+- **🧠 Behavior Engine** — 6-state FSM (Idle, Patrol, Investigate, Alert, Play, Rest) with mood system and obstacle avoidance
 - **🗣️ Natural Voice Control** — Speak naturally in any language, LLM understands intent and maps to actions
 - **👤 Face Recognition** — SCRFD detection + ArcFace recognition, register and identify people
-- **🤖 Autonomous Behaviors** — Touch reactions, sound tracking, idle animations, battery warnings
-- **🌐 Remote Access** — Control your robot from anywhere via Telegram or WireGuard tunnel
-- **🔄 Multi-Body Support** — Same brain, different bodies (dog, car, custom). Hot-swap at runtime
-- **⚡ Real-Time** — Voice response in <2s, face detection in 400ms, action execution in <100ms
-- **🔒 Secure** — API authentication, TLS, rate limiting, input validation
-- **📦 Modular** — Use any LLM (OpenAI, Anthropic, local), any robot hardware, any network
+- **🎭 Expression System** — 10 emotions (happy, sad, excited, curious, alert...) combining movement + LEDs + sound + speech
+- **🤖 Smart Movement** — Servo smoothing (EMA filter + easing), semantic movement (distance/angle-based), PWM auto-disable
+- **🌐 Remote Access** — Control your robot from anywhere via Telegram or Tailscale
+- **📡 Rich API** — 20+ REST endpoints: /sensors, /vision, /expression, /move, /look_at, /scan, /capabilities
+- **📦 Modular** — Use any LLM (OpenAI, Anthropic, Ollama, local), any robot hardware, any network
 
 ## 🏗️ Architecture
 
 ```
 Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
-├── nox_voice_brain.py     ◄────►       ├── nox_brain_bridge.py  (HTTP API)
-├── nox_face_recognition.py             ├── nox_daemon.py        (Hardware Control)
-├── nox_body_client.py                  ├── nox_voice_loop.py    (STT + Wake Word)
-├── nox_autonomous.py (optional)        └── nox_autonomous.py    (Reflexes)
-└── telegram_bot.py (optional)
+├── nox_body_client.py    ◄────►       ├── nox_brain_bridge.py  (HTTP API)
+├── nox_voice_relay.py                 ├── nox_daemon.py        (Hardware + Servos)
+├── nox_voice_brain.py                 ├── nox_behavior_engine.py (FSM + Patrol)
+└── telegram_bot.py (opt)              ├── nox_vision.py        (SmolVLM local AI)
+                                       ├── nox_face_recognition.py (SCRFD+ArcFace)
+                                       └── nox_voice_loop_v3.py (faster-whisper STT)
 ```
 
 ### Services
 
 | Service | Runs On | Port | Purpose |
 |---------|---------|------|---------|
-| `nox-body` | Body (Pi 4) | TCP 9999 | Low-level hardware daemon |
-| `nox-bridge` | Body (Pi 4) | HTTP 8888 | REST API for brain communication |
-| `nox-voice` | Body (Pi 4) | — | Wake word + Speech-to-Text |
-| `nox-brain` | Brain (Pi 5) | — | LLM processing + perception |
+| `nox-body` | Body (Pi 4) | TCP 9999 | Low-level hardware daemon (servos, sensors, camera) |
+| `nox-bridge` | Body (Pi 4) | HTTP 8888 | REST API + Behavior Engine (FSM) |
+| `nox-vision` | Body (Pi 4) | — | Local scene analysis (SmolVLM-256M via llama.cpp) |
+| `nox-voice` | Body (Pi 4) | — | Wake word + Speech-to-Text (faster-whisper) |
 
 ## 🚀 Quick Start
 
@@ -239,34 +241,82 @@ python3 brain/telegram_bot.py
 
 Commands: `/status`, `/photo`, `/speak <text>`, `/move <action>`, `/face list`
 
-## 👤 Face Recognition
+## 👁️ Local Vision (SmolVLM-256M)
 
-Uses SCRFD (detection) + ArcFace (recognition) via ONNX Runtime.
+On-device scene understanding via llama.cpp — no cloud, no Python ML frameworks.
 
 ```bash
-# Download models (one-time)
+# Build llama.cpp on Pi 4 (one-time, ~20 min)
+cd ~ && git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NEON=ON
+cmake --build build --config Release -j2
+
+# Download models (279 MB total)
+mkdir -p ~/models/smolvlm && cd ~/models/smolvlm
+wget https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/SmolVLM-256M-Instruct-Q8_0.gguf
+wget https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf
+
+# Check what PiDog sees
+curl -s http://your-robot.local:8888/vision | python3 -m json.tool
+```
+
+**Performance on Pi 4 (2GB RAM):**
+| Metric | Value |
+|--------|-------|
+| Inference time | ~27s (warm) / ~37s (cold) |
+| Generation speed | ~3.2 tokens/sec |
+| RAM usage | ~400MB peak |
+| Model size | 279 MB (167 + 112 MB) |
+
+## 👤 Face Recognition
+
+Uses SCRFD (detection) + ArcFace (recognition) via ONNX Runtime. Runs on the body (Pi 4).
+
+```bash
+# Download ONNX models (one-time)
 cd models
 ./download_models.sh
 
-# Register a face
-python3 brain/nox_face_recognition.py register "Rocky" photo.jpg
+# Register a face via API
+curl -X POST http://your-robot.local:8888/face/register \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Rocky"}'
 
-# Identify faces in image
-python3 brain/nox_face_recognition.py identify photo.jpg
+# Identify faces in current view
+curl -X POST http://your-robot.local:8888/face/identify
 
-# Performance (Pi 5):
+# Performance (Pi 4):
 # Detection: ~400ms | Embedding: ~188ms | Full: ~567ms
 ```
 
 ## 🤖 Autonomous Behaviors
 
-The body has built-in reflexes that work without the brain:
+The **Behavior Engine** is a 6-state FSM with mood system that runs independently on the body:
 
+### States
+- **Idle** → Random head movements, occasional tail wag, energy recovery
+- **Patrol** → Autonomous navigation with ultrasonic + vision obstacle avoidance
+- **Investigate** → Approach detected person/sound, face tracking
+- **Alert** → Threat response (bark, red LEDs, report to brain)
+- **Play** → Interactive play when touched (tail wag, happy LEDs, tricks)
+- **Rest** → Low-power state, minimal movement, PWM auto-disable
+
+### Built-in Reflexes (work without brain)
 - **Touch** → Pat on head triggers tail wag + happy LEDs
 - **Sound** → Head turns toward sound source
 - **Battery** → Warning at <6.8V, critical alert at <6.2V
-- **Idle** → Random head movements + occasional tail wag after 30s
+- **Vision** → Patrol uses SmolVLM to detect people and obstacles
 - **Face tracking** → Head follows detected faces
+
+```bash
+# Start patrol mode
+curl -X POST http://your-robot.local:8888/behavior/start \
+  -H "Content-Type: application/json" \
+  -d '{"behavior": "patrol"}'
+
+# Stop all behaviors (servos auto-disable after 120s idle)
+curl -X POST http://your-robot.local:8888/behavior/stop
+```
 
 ## 🛡️ Security
 
@@ -288,36 +338,43 @@ curl -H "Authorization: Bearer your-secret-token" http://robot:8888/status
 
 ```
 pidog-embodiment/
-├── brain/                      # Runs on Pi 5 / Desktop
-│   ├── nox_voice_brain.py      # LLM-powered voice processing
-│   ├── nox_face_recognition.py # SCRFD + ArcFace face engine
-│   ├── nox_body_client.py      # Python client for bridge API
-│   ├── telegram_bot.py         # Telegram remote control
+├── brain/                         # Runs on Pi 5 / Desktop
+│   ├── nox_body_client.py         # Python client for bridge API (37 functions)
+│   ├── nox_voice_brain.py         # LLM-powered voice processing
+│   ├── nox_voice_relay.py         # Voice relay for remote STT
+│   ├── nox_body_poller.py         # Async body status poller
+│   ├── telegram_bot.py            # Telegram remote control
 │   ├── requirements.txt
 │   └── services/
 │       └── nox-brain.service
-├── body/                       # Runs on Pi 4 / Robot
-│   ├── nox_brain_bridge.py     # HTTP API server
-│   ├── nox_autonomous.py       # Autonomous behaviors
-│   ├── nox_voice_loop.py       # Wake word + STT
-│   ├── adapters/               # Hardware-specific adapters
-│   │   ├── pidog.py            # SunFounder PiDog
-│   │   ├── picar.py            # Robot car (template)
-│   │   └── custom.py           # Build your own
+├── body/                          # Runs on Pi 4 / Robot
+│   ├── nox_daemon.py              # Low-level hardware daemon (servos, sensors, camera)
+│   ├── nox_brain_bridge.py        # HTTP REST API server (20+ endpoints)
+│   ├── nox_behavior_engine.py     # 6-state FSM + mood system + obstacle avoidance
+│   ├── nox_vision.py              # Local vision engine (SmolVLM-256M via llama.cpp)
+│   ├── nox_face_recognition.py    # SCRFD detection + ArcFace recognition
+│   ├── pidog_memory.py            # Drift-style memory with co-occurrence + decay
+│   ├── nox_voice_loop_v3.py       # Wake word + faster-whisper STT
+│   ├── nox_control.py             # Direct servo control utilities
+│   ├── adapters/                  # Hardware-specific adapters
+│   │   ├── pidog.py               # SunFounder PiDog
+│   │   ├── picar.py               # Robot car (template)
+│   │   └── custom.py              # Build your own
 │   ├── requirements.txt
 │   └── services/
-│       ├── nox-body.service
-│       ├── nox-bridge.service
-│       └── nox-voice.service
-├── shared/                     # Shared utilities
-│   ├── config.py               # Configuration management
-│   └── security.py             # Auth, rate limiting
-├── models/                     # ONNX models (gitignored)
-│   └── download_models.sh      # One-click model download
+│       ├── nox-body.service       # Hardware daemon (TCP 9999)
+│       ├── nox-bridge.service     # REST API (HTTP 8888)
+│       ├── nox-vision.service     # Vision engine (SmolVLM)
+│       └── nox-voice.service      # Wake word + STT
+├── shared/                        # Shared utilities
+│   ├── config.py                  # Configuration management
+│   └── security.py                # Auth, rate limiting
+├── models/                        # ONNX + GGUF models (gitignored)
+│   └── download_models.sh         # One-click model download
 ├── scripts/
-│   ├── deploy.sh               # Full deployment script
-│   ├── pidog.sh                # CLI control script
-│   └── setup-remote.sh         # Remote access setup
+│   ├── deploy.sh                  # Full deployment script
+│   ├── pidog.sh                   # CLI control script
+│   └── setup-remote.sh            # Remote access setup
 ├── docs/
 │   ├── architecture.md
 │   ├── api-reference.md

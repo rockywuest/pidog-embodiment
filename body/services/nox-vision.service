@@ -1,0 +1,19 @@
+[Unit]
+Description=Nox Vision Engine (SmolVLM local inference)
+After=nox-body.service
+Wants=nox-body.service
+
+[Service]
+Type=simple
+User=pidog
+WorkingDirectory=/home/pidog
+ExecStart=/usr/bin/python3 -u /home/pidog/nox_vision.py
+Restart=on-failure
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+# Memory limit: prevent OOM from killing daemon/bridge
+MemoryMax=700M
+MemoryHigh=600M
+
+[Install]
+WantedBy=multi-user.target

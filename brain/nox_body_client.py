@@ -186,58 +186,118 @@ def battery():
 
 
 def express(emotion, text=""):
-    """Express an emotion with matching actions, RGB, and optional speech.
-    
-    Emotions: happy, sad, curious, excited, alert, sleepy, angry, love, think
+    """Express an emotion (delegates to server-side /expression endpoint).
+
+    Emotions: happy, sad, curious, excited, alert, sleepy, scared, angry, love, think
     """
-    EMOTION_MAP = {
-        "happy": {
-            "actions": ["wag_tail"],
-            "rgb": {"r": 0, "g": 255, "b": 0, "mode": "breath", "bps": 1.5},
-        },
-        "sad": {
-            "actions": ["lie"],
-            "rgb": {"r": 0, "g": 0, "b": 128, "mode": "breath", "bps": 0.3},
-        },
-        "curious": {
-            "actions": [],
-            "rgb": {"r": 0, "g": 255, "b": 255, "mode": "breath", "bps": 1.0},
-            "head": {"yaw": 20, "roll": 0, "pitch": -10},
-        },
-        "excited": {
-            "actions": ["wag_tail", "bark"],
-            "rgb": {"r": 255, "g": 255, "b": 0, "mode": "boom", "bps": 2.0},
-        },
-        "alert": {
-            "actions": ["stand"],
-            "rgb": {"r": 255, "g": 100, "b": 0, "mode": "boom", "bps": 1.5},
-        },
-        "sleepy": {
-            "actions": ["doze_off"],
-            "rgb": {"r": 0, "g": 0, "b": 80, "mode": "breath", "bps": 0.3},
-        },
-        "angry": {
-            "actions": ["bark"],
-            "rgb": {"r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2.0},
-        },
-        "love": {
-            "actions": ["wag_tail"],
-            "rgb": {"r": 255, "g": 50, "b": 150, "mode": "breath", "bps": 1.0},
-        },
-        "think": {
-            "actions": [],
-            "rgb": {"r": 128, "g": 0, "b": 255, "mode": "breath", "bps": 0.8},
-            "head": {"yaw": 15, "roll": -10, "pitch": 10},
-        },
-    }
-    
-    settings = EMOTION_MAP.get(emotion, EMOTION_MAP["curious"])
-    return combo(
-        actions=settings.get("actions", []),
-        speak_text=text,
-        rgb_settings=settings.get("rgb"),
-        head_pos=settings.get("head"),
-    )
+    return expression(emotion, text)
+
+
+# ─── Sprint 4: Semantic API ───
+
+def expression(emotion, text=""):
+    """Server-side expression: coordinated action + RGB + head + sound + speech.
+
+    Emotions: happy, sad, excited, curious, alert, sleepy, scared, angry, love, think
+    """
+    data = {"type": emotion}
+    if text:
+        data["speak"] = text
+    return _post("/expression", data)
+
+
+def move_smart(direction, distance_cm=None, angle_deg=None, speed=70):
+    """Semantic movement: distance or angle based.
+
+    direction: forward, backward, turn_left, turn_right
+    distance_cm: for forward/backward (default 15)
+    angle_deg: for turn_left/turn_right (default 45)
+    """
+    data = {"direction": direction, "speed": speed}
+    if distance_cm is not None:
+        data["distance_cm"] = distance_cm
+    if angle_deg is not None:
+        data["angle_deg"] = angle_deg
+    return _post("/move", data)
+
+
+def look_at(direction=None, angle=None, tilt=None):
+    """Semantic head control.
+
+    direction: left, right, up, down, center, forward
+    angle: yaw in degrees (overrides direction's yaw)
+    tilt: pitch in degrees
+    """
+    data = {}
+    if direction:
+        data["direction"] = direction
+    if angle is not None:
+        data["angle"] = angle
+    if tilt is not None:
+        data["tilt"] = tilt
+    return _post("/look_at", data)
+
+
+def sensors():
+    """Structured sensor data: battery, distance, touch, sound, behavior."""
+    return _get("/sensors")
+
+
+def capabilities():
+    """Endpoint discovery: all endpoints, actions, expressions, sounds."""
+    return _get("/capabilities")
+
+
+# ─── Sprint 3: Behavior Engine ───
+
+def state():
+    """Behavior Engine state: FSM state, mood, obstacles."""
+    return _get("/state")
+
+
+def scan():
+    """Quick 3-direction ultrasonic scan (left, forward, right)."""
+    return _get("/scan")
+
+
+def scan_sweep():
+    """Full 7-point head sweep (-45 to +45 degrees)."""
+    return _get("/scan/sweep")
+
+
+def behavior_start(behavior):
+    """Start a behavior (patrol, idle, investigate, alert, play, rest)."""
+    return _post("/behavior/start", {"behavior": behavior})
+
+
+def behavior_stop():
+    """Stop current behavior (return to idle)."""
+    return _post("/behavior/stop")
+
+
+def emergency_stop():
+    """Emergency stop: lie down immediately + red LEDs."""
+    return _post("/emergency_stop")
+
+
+# ─── Sprint 5: Vision ───
+
+def vision():
+    """Get latest vision result (SmolVLM scene description).
+
+    Returns: {description, prompt_type, inference_s, age_s, model, error}
+    """
+    return _get("/vision")
+
+
+def vision_describe():
+    """Get vision description as plain text (convenience wrapper)."""
+    result = _get("/vision")
+    if result.get("error"):
+        return f"Vision error: {result['error']}"
+    desc = result.get("description", "")
+    age = result.get("age_s", "?")
+    return f"[{age}s ago] {desc}"
 
 
 # ─── CLI Interface ───
@@ -248,25 +308,45 @@ def main():
 
 Usage: nox_body_client.py <command> [args...]
 
-Commands:
-  status          Full status
-  look            Take photo + perception
-  photo [path]    Take and save photo
-  move <action>   Movement (forward, backward, turn_left, etc.)
-  head <y> <r> <p> Move head
-  rgb <r> <g> <b> [mode] Set LEDs
-  speak <text>    Speak text
-  sound <name>    Play sound
-  wake            Wake up
-  sleep           Go to sleep
-  reset           Reset position
-  battery         Battery voltage
-  express <emotion> [text]  Express emotion
-  register <name> Register face
-  faces           List known faces
-  voice-check     Check voice inbox
-  
-Emotions: happy, sad, curious, excited, alert, sleepy, angry, love, think
+Movement & Actions:
+  move <action>        Low-level movement (stand, sit, forward, wag_tail...)
+  go <dir> [cm/deg]    Semantic movement (forward 50, turn_left 90)
+  head <y> <r> <p>     Raw head control (yaw, roll, pitch)
+  look-at <direction>  Semantic head (left, right, up, down, center)
+
+Expressions & Communication:
+  express <emotion> [text]  Express emotion (server-side, with sound+LEDs)
+  speak <text>              Speak text via TTS
+  sound <name>              Play a built-in sound
+  rgb <r> <g> <b> [mode]   Set LEDs
+
+Sensing:
+  status            Full status (sensors + perception + behavior)
+  sensors           Structured sensor data (battery, distance, touch)
+  look              Take photo + perception
+  photo [path]      Take and save photo
+  state             Behavior Engine state + mood
+  scan              Quick 3-direction ultrasonic scan
+  scan-sweep        Full 7-point head sweep
+  capabilities      Endpoint discovery (all actions, expressions, sounds)
+  vision            Latest vision result (SmolVLM scene description)
+  vision-describe   Vision description as plain text
+
+Behavior Engine:
+  behavior <name>   Start behavior (patrol, idle, investigate, alert, play, rest)
+  behavior-stop     Stop current behavior
+  emergency-stop    Emergency stop (lie down + red LEDs)
+
+Other:
+  wake              Wake up
+  sleep             Go to sleep
+  reset             Reset position
+  battery           Battery voltage
+  register <name>   Register face
+  faces             List known faces
+  voice-check       Check voice inbox
+
+Emotions: happy, sad, excited, curious, alert, sleepy, scared, angry, love, think
 """)
         return
     
@@ -292,11 +372,29 @@ Emotions: happy, sad, curious, excited, alert, sleepy, angry, love, think
         elif cmd == "move":
             action = args[0] if args else "stand"
             result = move(action)
+        elif cmd == "go":
+            # Semantic movement: go forward 50, go turn_left 90
+            direction = args[0] if args else "forward"
+            amount = float(args[1]) if len(args) > 1 else None
+            if direction in ("forward", "backward"):
+                result = move_smart(direction, distance_cm=amount)
+            elif direction in ("turn_left", "turn_right"):
+                result = move_smart(direction, angle_deg=amount)
+            else:
+                result = move_smart(direction)
         elif cmd == "head":
             y = float(args[0]) if len(args) > 0 else 0
             r = float(args[1]) if len(args) > 1 else 0
             p = float(args[2]) if len(args) > 2 else 0
             result = head(y, r, p)
+        elif cmd == "look-at":
+            if args and args[0].replace("-", "").replace(".", "").isdigit():
+                # Numeric: look-at 45 -10
+                angle = float(args[0])
+                tilt = float(args[1]) if len(args) > 1 else None
+                result = look_at(angle=angle, tilt=tilt)
+            else:
+                result = look_at(direction=args[0] if args else "center")
         elif cmd == "rgb":
             r_v = int(args[0]) if len(args) > 0 else 128
             g_v = int(args[1]) if len(args) > 1 else 0
@@ -319,7 +417,29 @@ Emotions: happy, sad, curious, excited, alert, sleepy, angry, love, think
         elif cmd == "express":
             emotion = args[0] if args else "happy"
             text = " ".join(args[1:]) if len(args) > 1 else ""
-            result = express(emotion, text)
+            result = expression(emotion, text)
+        elif cmd == "sensors":
+            result = sensors()
+        elif cmd == "state":
+            result = state()
+        elif cmd == "scan":
+            result = scan()
+        elif cmd == "scan-sweep":
+            result = scan_sweep()
+        elif cmd == "capabilities":
+            result = capabilities()
+        elif cmd == "behavior":
+            behavior_name = args[0] if args else "patrol"
+            result = behavior_start(behavior_name)
+        elif cmd == "behavior-stop":
+            result = behavior_stop()
+        elif cmd == "emergency-stop":
+            result = emergency_stop()
+        elif cmd == "vision":
+            result = vision()
+        elif cmd == "vision-describe":
+            print(vision_describe())
+            return
         elif cmd == "register":
             name = args[0] if args else ""
             result = register_face(name)
@@ -329,7 +449,6 @@ Emotions: happy, sad, curious, excited, alert, sleepy, angry, love, think
             result = voice_inbox()
         elif cmd == "combo":
             # JSON from stdin
-            import sys
             data = json.loads(sys.stdin.read())
             result = _post("/combo", data)
         else:
