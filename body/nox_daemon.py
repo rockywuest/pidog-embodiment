@@ -13,6 +13,7 @@ import signal
 import socket
 import threading
 import traceback
+import math
 from pathlib import Path
 
 # Audio config for HifiBerry DAC (auto-detect card number)
@@ -113,15 +114,19 @@ def _is_sleep_hours():
 
 
 
-def _mark_activity():
-    global _last_activity, _idle_state
+def _mark_activity(internal=False):
+    global _last_activity, _idle_state, _servo_pwm_disabled
+    if internal:
+        return  # Behavior engine auto-commands don't prevent sleep
     _last_activity = time.time()
     if _idle_state != "active":
+        was_sleeping = _servo_pwm_disabled
         _idle_state = "active"
-        print(f"[nox] Activity detected, waking up", flush=True)
+        _servo_pwm_disabled = False
+        print(f"[nox] Activity detected, waking up{' (re-enabling servos)' if was_sleeping else ''}", flush=True)
 
 def _idle_watchdog():
-    global _idle_state
+    global _idle_state, _servo_pwm_disabled
     while running:
         elapsed = time.time() - _last_activity
         if _idle_state == "active" and elapsed > IDLE_REST_SECS:
@@ -135,7 +140,8 @@ def _idle_watchdog():
                 print(f"[nox] Idle lie failed: {e}", flush=True)
         elif _idle_state == "resting" and elapsed > IDLE_SLEEP_SECS:
             _idle_state = "sleeping"
-            print(f"[nox] Idle {int(elapsed)}s → deep sleep (LEDs dimmed)", flush=True)
+            _servo_pwm_disabled = True
+            print(f"[nox] Idle {int(elapsed)}s → deep sleep (servos off, LEDs dimmed)", flush=True)
             try:
                 with dog_lock:
                     dog.rgb_strip.set_mode("breath", [0, 0, 0] if _is_sleep_hours() else [0, 0, 15], bps=0.15)
@@ -143,6 +149,52 @@ def _idle_watchdog():
                 print(f"[nox] Deep sleep failed: {e}", flush=True)
         time.sleep(5)
 
+
+
+# --- Servo Smoothing (Sprint 1) -----------------------------------------------
+def _ease_in_out_cubic(t):
+    """Cubic ease-in-out: smooth acceleration and deceleration. t in [0,1]."""
+    if t < 0.5:
+        return 4 * t * t * t
+    else:
+        return 1 - pow(-2 * t + 2, 3) / 2
+
+
+class SmoothServo:
+    """EMA-filtered head tracking with deadband."""
+    DEADBAND_DEG = 2.0   # ignore changes smaller than 2 degrees total
+    EMA_ALPHA = 0.15     # smoothing factor (lower = smoother, 0.1-0.3 range)
+
+    def __init__(self):
+        self._current = [0.0, 0.0, 0.0]  # yaw, roll, pitch
+        self._target = [0.0, 0.0, 0.0]
+
+    def update_target(self, yaw, roll, pitch):
+        """Set new target. Returns True if change exceeds deadband."""
+        new = [float(yaw), float(roll), float(pitch)]
+        delta = sum(abs(new[i] - self._current[i]) for i in range(3))
+        if delta < self.DEADBAND_DEG:
+            return False
+        self._target = new
+        return True
+
+    def ema_step(self):
+        """One EMA step toward target. Returns interpolated [yaw, roll, pitch]."""
+        for i in range(3):
+            self._current[i] += self.EMA_ALPHA * (self._target[i] - self._current[i])
+        return list(self._current)
+
+    def snap_to(self, yaw, roll, pitch):
+        """Hard-set current position (after eased move completes)."""
+        self._current = [float(yaw), float(roll), float(pitch)]
+        self._target = list(self._current)
+
+    def get_current(self):
+        return list(self._current)
+
+
+_smooth_head = SmoothServo()
+_servo_pwm_disabled = False  # True when sleeping (no head commands accepted)
 
 def init_dog():
     """Initialize PiDog with broken sensors skipped."""
@@ -187,9 +239,9 @@ def cmd_status():
     return info
 
 
-def cmd_move(action, steps=3, speed=80):
+def cmd_move(action, steps=3, speed=80, internal=False):
     """Execute a movement action."""
-    _mark_activity()
+    _mark_activity(internal=internal)
     if _idle_state == "sleeping":
         # Re-init servos before moving
         pass  # PiDog re-enables on do_action
@@ -199,17 +251,58 @@ def cmd_move(action, steps=3, speed=80):
     return {"ok": True, "action": action}
 
 
-def cmd_head(yaw=0, roll=0, pitch=0):
-    """Move head."""
-    _mark_activity()
+def cmd_head(yaw=0, roll=0, pitch=0, smooth=True, internal=False):
+    """Move head with smooth easing + deadband filter."""
+    _mark_activity(internal=internal)
+    if _servo_pwm_disabled:
+        return {"ok": False, "error": "servos sleeping", "hint": "send wake first"}
+    yaw, roll, pitch = float(yaw), float(roll), float(pitch)
+    # Deadband: skip if change is too small
+    if not _smooth_head.update_target(yaw, roll, pitch):
+        return {"ok": True, "head": [yaw, roll, pitch], "skipped": "deadband"}
+    if not smooth:
+        # Direct move (for resets/wake)
+        with dog_lock:
+            dog.head_move([[yaw, roll, pitch]], immediately=True, speed=80)
+            time.sleep(0.3)
+        _smooth_head.snap_to(yaw, roll, pitch)
+        return {"ok": True, "head": [yaw, roll, pitch]}
+    # Smooth eased interpolation (S-curve)
+    start = _smooth_head.get_current()
+    target = [yaw, roll, pitch]
+    steps = 6
+    duration = 0.35  # seconds total
+    step_delay = duration / steps
     with dog_lock:
-        dog.head_move([[float(yaw), float(roll), float(pitch)]], immediately=True, speed=80)
-        time.sleep(0.5)
+        for s in range(1, steps + 1):
+            t = _ease_in_out_cubic(s / steps)
+            pos = [start[i] + (target[i] - start[i]) * t for i in range(3)]
+            dog.head_move([pos], immediately=True, speed=80)
+            time.sleep(step_delay)
+    _smooth_head.snap_to(yaw, roll, pitch)
     return {"ok": True, "head": [yaw, roll, pitch]}
 
 
+
+def cmd_head_ema(yaw=0, roll=0, pitch=0, internal=False):
+    """EMA-only head update for autonomous tracking (no easing, just smooth filter)."""
+    _mark_activity(internal=internal)
+    if _servo_pwm_disabled:
+        return {"ok": False, "error": "servos sleeping"}
+    yaw, roll, pitch = float(yaw), float(roll), float(pitch)
+    if not _smooth_head.update_target(yaw, roll, pitch):
+        return {"ok": True, "skipped": "deadband"}
+    pos = _smooth_head.ema_step()
+    with dog_lock:
+        dog.head_move([pos], immediately=True, speed=80)
+    return {"ok": True, "head": pos}
+
+_VALID_RGB_STYLES = {"monochromatic", "breath", "boom", "bark", "speak", "listen"}
+
 def cmd_rgb(r=128, g=0, b=255, mode="breath", bps=0.8):
     """Set RGB LEDs."""
+    if not isinstance(mode, str) or mode not in _VALID_RGB_STYLES and mode != "off":
+        mode = "breath"
     with dog_lock:
         color = [int(r), int(g), int(b)]
         if mode == "off":
@@ -542,11 +635,109 @@ def cmd_scan():
     return {"ok": True, "scanned": ["left", "center", "right"]}
 
 
+
+def cmd_scan_sweep(angles=None, settle_ms=200, samples=3):
+    """Sweep head across angles and read ultrasonic distance at each position.
+    Returns {angle: distance_cm} map for obstacle detection.
+    Adapted from HoundMind ScanningService pattern."""
+    if angles is None:
+        angles = [-45, -30, -15, 0, 15, 30, 45]
+    _mark_activity()
+    result = {}
+    with dog_lock:
+        for angle in angles:
+            dog.head_move([[float(angle), 0, 0]], immediately=True, speed=70)
+            time.sleep(settle_ms / 1000.0)
+            # Read multiple ultrasonic samples, take median
+            readings = []
+            for _ in range(samples):
+                with ultrasonic_lock:
+                    d = ultrasonic_distance
+                if d > 0:
+                    readings.append(d)
+                time.sleep(0.04)
+            if readings:
+                readings.sort()
+                result[str(angle)] = round(readings[len(readings) // 2], 1)
+            else:
+                result[str(angle)] = -1
+        # Return head to center
+        dog.head_move([[0, 0, 0]], immediately=True, speed=70)
+    return {"ok": True, "scan": result, "timestamp": time.time()}
+
+
+def cmd_emergency_stop():
+    """Emergency stop: immediately cease all movement and lie down.
+    Adapted from HoundMind SafetyModule pattern."""
+    global _idle_state, _servo_pwm_disabled
+    print("[nox] EMERGENCY STOP triggered!", flush=True)
+    with dog_lock:
+        try:
+            dog.do_action("lie", speed=100)
+        except Exception:
+            pass
+        try:
+            dog.rgb_strip.set_mode("boom", [255, 0, 0], bps=2.0)
+        except Exception:
+            pass
+    _idle_state = "resting"
+    return {"ok": True, "emergency": True}
+
+
+def cmd_three_way_scan():
+    """Quick 3-direction scan: left, forward, right.
+    Faster than full sweep — for real-time obstacle avoidance during patrol."""
+    _mark_activity()
+    result = {}
+    with dog_lock:
+        # Forward
+        dog.head_move([[0, 0, 0]], immediately=True, speed=80)
+        time.sleep(0.15)
+        readings = []
+        for _ in range(3):
+            with ultrasonic_lock:
+                d = ultrasonic_distance
+            if d > 0:
+                readings.append(d)
+            time.sleep(0.03)
+        result["forward"] = round(sorted(readings)[len(readings) // 2], 1) if readings else -1
+
+        # Left
+        dog.head_move([[40, 0, 0]], immediately=True, speed=80)
+        time.sleep(0.15)
+        readings = []
+        for _ in range(3):
+            with ultrasonic_lock:
+                d = ultrasonic_distance
+            if d > 0:
+                readings.append(d)
+            time.sleep(0.03)
+        result["left"] = round(sorted(readings)[len(readings) // 2], 1) if readings else -1
+
+        # Right
+        dog.head_move([[-40, 0, 0]], immediately=True, speed=80)
+        time.sleep(0.15)
+        readings = []
+        for _ in range(3):
+            with ultrasonic_lock:
+                d = ultrasonic_distance
+            if d > 0:
+                readings.append(d)
+            time.sleep(0.03)
+        result["right"] = round(sorted(readings)[len(readings) // 2], 1) if readings else -1
+
+        # Return to center
+        dog.head_move([[0, 0, 0]], immediately=True, speed=80)
+
+    return {"ok": True, "scan": result, "timestamp": time.time()}
+
+
 # ─── Command dispatcher ───
 COMMANDS = {
     "status": lambda args: cmd_status(),
-    "move": lambda args: cmd_move(args.get("action", "stand"), args.get("steps", 3), args.get("speed", 80)),
-    "head": lambda args: cmd_head(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0)),
+    "move": lambda args: cmd_move(args.get("action", "stand"), args.get("steps", 3), args.get("speed", 80), internal=args.get("_internal", False)),
+    "head": lambda args: cmd_head(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0), args.get("smooth", True), internal=args.get("_internal", False)),
+    "head_ema": lambda args: cmd_head_ema(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0), internal=args.get("_internal", False)),
     "rgb": lambda args: cmd_rgb(args.get("r", 128), args.get("g", 0), args.get("b", 255), args.get("mode", "breath"), args.get("bps", 0.8)),
     "photo": lambda args: cmd_photo(args.get("path")),
     "speak": lambda args: cmd_speak(args.get("text", "")),
@@ -562,6 +753,9 @@ COMMANDS = {
     "touch": lambda args: cmd_touch(),
     "ears": lambda args: cmd_ears(),
     "scan": lambda args: cmd_scan(),
+    "scan_sweep": lambda args: cmd_scan_sweep(args.get("angles"), args.get("settle_ms", 200), args.get("samples", 3)),
+    "three_way_scan": lambda args: cmd_three_way_scan(),
+    "emergency_stop": lambda args: cmd_emergency_stop(),
 }
 
 

@@ -22,6 +22,9 @@ import traceback
 import urllib.request
 import signal
 
+# Behavior engine reference (set in main())
+_behavior_engine = None
+
 # Memory integration
 try:
     import pidog_memory
@@ -44,9 +47,47 @@ BRAIN_CALLBACK_PORT = int(os.environ.get("BRAIN_CALLBACK_PORT", "8889"))
 PHOTO_DIR = "/tmp"
 FACE_DB_DIR = "/home/pidog/nox_face_db"
 PERCEPTION_INTERVAL = 2.0  # seconds between auto-perception cycles
+VISION_RESULT_FILE = "/tmp/nox_vision_latest.json"
 
 # Ensure directories exist
 os.makedirs(FACE_DB_DIR, exist_ok=True)
+
+# ─── Sprint 4: Expression + Movement Constants ───
+EXPRESSION_MAP = {
+    "happy":   {"actions": ["wag_tail"], "rgb": {"r": 0, "g": 255, "b": 100, "mode": "breath", "bps": 1.5}, "head": {"yaw": 0, "roll": 0, "pitch": -5}},
+    "sad":     {"actions": ["lie"], "rgb": {"r": 0, "g": 0, "b": 128, "mode": "breath", "bps": 0.3}, "head": {"yaw": 0, "roll": 0, "pitch": 15}},
+    "excited": {"actions": ["wag_tail", "bark"], "rgb": {"r": 255, "g": 255, "b": 0, "mode": "boom", "bps": 2.0}, "head": {"yaw": 0, "roll": 0, "pitch": -10}, "sound": "woohoo"},
+    "curious": {"actions": [], "rgb": {"r": 0, "g": 200, "b": 255, "mode": "breath", "bps": 1.0}, "head": {"yaw": 20, "roll": 5, "pitch": -10}},
+    "alert":   {"actions": ["stand"], "rgb": {"r": 255, "g": 150, "b": 0, "mode": "boom", "bps": 1.5}, "head": {"yaw": 0, "roll": 0, "pitch": -5}, "sound": "growl_1"},
+    "sleepy":  {"actions": ["doze_off"], "rgb": {"r": 0, "g": 0, "b": 60, "mode": "breath", "bps": 0.2}, "head": {"yaw": 0, "roll": 5, "pitch": 10}},
+    "scared":  {"actions": ["lie"], "rgb": {"r": 200, "g": 0, "b": 200, "mode": "boom", "bps": 2.5}, "head": {"yaw": 0, "roll": 0, "pitch": 10}, "sound": "confused_1"},
+    "angry":   {"actions": ["bark"], "rgb": {"r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2.0}, "head": {"yaw": 0, "roll": 0, "pitch": -5}, "sound": "growl_2"},
+    "love":    {"actions": ["wag_tail"], "rgb": {"r": 255, "g": 50, "b": 150, "mode": "breath", "bps": 1.0}, "head": {"yaw": 0, "roll": 0, "pitch": -5}},
+    "think":   {"actions": [], "rgb": {"r": 128, "g": 0, "b": 255, "mode": "breath", "bps": 0.8}, "head": {"yaw": 15, "roll": -10, "pitch": 10}},
+}
+
+LOOK_DIRECTIONS = {
+    "left":    {"yaw": 35, "roll": 0, "pitch": 0},
+    "right":   {"yaw": -35, "roll": 0, "pitch": 0},
+    "up":      {"yaw": 0, "roll": 0, "pitch": -20},
+    "down":    {"yaw": 0, "roll": 0, "pitch": 15},
+    "center":  {"yaw": 0, "roll": 0, "pitch": 0},
+    "forward": {"yaw": 0, "roll": 0, "pitch": 0},
+}
+
+STEP_DISTANCE_CM = 5.0   # approximate cm per forward/backward step
+STEP_ANGLE_DEG = 15.0    # approximate degrees per turn step
+
+VALID_ACTIONS = [
+    "stand", "sit", "lie", "forward", "backward", "turn_left", "turn_right",
+    "wag_tail", "bark", "trot", "stretch", "push_up", "howling", "pant", "doze_off",
+]
+
+AVAILABLE_SOUNDS = [
+    "angry", "confused_1", "confused_2", "confused_3", "growl_1", "growl_2",
+    "howling", "pant", "single_bark_1", "single_bark_2", "snoring", "woohoo",
+]
+
 
 # ─── Brain Push (zero-latency voice delivery) ───
 def push_to_brain(data, timeout=5):
@@ -325,14 +366,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # System status
             sensors = get_sensor_data()
             state = perception.snapshot()
-            self._send_json({
+            resp = {
                 "ok": True,
                 "sensors": sensors,
                 "perception": state,
                 "known_faces": face_db.list_known(),
                 "uptime_s": sensors.get("uptime_s", 0),
                 "battery_v": sensors.get("battery_v", 0),
-            })
+            }
+            if _behavior_engine:
+                resp["behavior"] = _behavior_engine.get_state()
+            self._send_json(resp)
         
         elif path == "/perception":
             # Current perception state
@@ -403,6 +447,113 @@ class BridgeHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "memory not available"}, 503)
 
+
+        elif path == "/state":
+            if _behavior_engine:
+                self._send_json(_behavior_engine.get_state())
+            else:
+                self._send_json({"error": "behavior engine not running"}, 503)
+
+        elif path == "/scan":
+            r = send_to_daemon({"cmd": "three_way_scan"})
+            self._send_json(r)
+
+        elif path == "/scan/sweep":
+            r = send_to_daemon({"cmd": "scan_sweep"})
+            self._send_json(r)
+
+        elif path == "/sensors":
+            # Aggregated sensor data (Sprint 4)
+            raw = send_to_daemon({"cmd": "sensors"})
+            if raw.get("error"):
+                self._send_json({"ok": False, "error": raw["error"]}, 503)
+            else:
+                batt_v = raw.get("battery_v", 0)
+                batt_pct = max(0, min(100, int((batt_v - 6.0) / (8.4 - 6.0) * 100))) if batt_v > 0 else 0
+                result = {
+                    "ok": True,
+                    "ts": raw.get("ts", time.time()),
+                    "battery": {
+                        "voltage": batt_v,
+                        "percent": batt_pct,
+                        "charging": batt_v > 8.35,
+                    },
+                    "distance": {
+                        "forward_cm": raw.get("distance_cm"),
+                    },
+                    "touch": {
+                        "active": raw.get("touch", "N") != "N",
+                        "side": {"N": "none", "L": "left", "R": "right", "LS": "slide-left", "RS": "slide-right"}.get(raw.get("touch", "N"), str(raw.get("touch", "N"))),
+                    },
+                    "sound": raw.get("sound", {}),
+                    "imu": raw.get("imu", {}),
+                    "system": {
+                        "hostname": raw.get("hostname", "pidog"),
+                        "uptime_s": raw.get("uptime_s", 0),
+                        "disk_free_gb": raw.get("disk_free_gb", 0),
+                    },
+                }
+                if _behavior_engine:
+                    be = _behavior_engine.get_state()
+                    result["behavior"] = {
+                        "state": be.get("state", "unknown"),
+                        "mood": be.get("dominant_mood", "unknown"),
+                        "patrol_enabled": be.get("patrol_enabled", False),
+                        "low_battery": be.get("low_battery", False),
+                    }
+                    obs = be.get("obstacles", {})
+                    scan = obs.get("last_scan", {})
+                    if scan.get("forward"):
+                        result["distance"]["forward_cm"] = scan["forward"]
+                        result["distance"]["scan_age_s"] = obs.get("scan_age_s")
+                # Add vision age if available (Sprint 5)
+                try:
+                    with open(VISION_RESULT_FILE, "r") as vf:
+                        vd = json.load(vf)
+                    result["vision"] = {
+                        "age_s": round(time.time() - vd.get("ts", 0), 1),
+                        "description": (vd.get("description") or "")[:100],
+                        "error": vd.get("error"),
+                    }
+                except Exception:
+                    result["vision"] = {"age_s": None, "error": "not running"}
+                self._send_json(result)
+
+        elif path == "/vision":
+            # Vision engine results (Sprint 5)
+            try:
+                with open(VISION_RESULT_FILE, "r") as vf:
+                    vision_data = json.load(vf)
+                vision_data["age_s"] = round(time.time() - vision_data.get("ts", 0), 1)
+                vision_data["ok"] = True
+                self._send_json(vision_data)
+            except FileNotFoundError:
+                self._send_json({"ok": False, "error": "vision not running (no result file)"}, 503)
+            except Exception as e:
+                self._send_json({"ok": False, "error": f"vision read error: {e}"}, 500)
+
+        elif path == "/capabilities":
+            # Endpoint discovery (Sprint 4)
+            self._send_json({
+                "ok": True,
+                "version": "sprint5",
+                "endpoints": {
+                    "GET": ["/status", "/perception", "/photo", "/look", "/faces",
+                            "/voice/inbox", "/voice/echo_until", "/memory/recent",
+                            "/memory/stats", "/state", "/scan", "/scan/sweep",
+                            "/sensors", "/capabilities", "/vision"],
+                    "POST": ["/action", "/speak", "/command", "/rgb", "/head",
+                             "/face/register", "/voice/respond", "/voice/input",
+                             "/combo", "/behavior/start", "/behavior/stop",
+                             "/emergency_stop", "/move", "/expression", "/look_at"],
+                },
+                "actions": VALID_ACTIONS,
+                "expressions": list(EXPRESSION_MAP.keys()),
+                "sounds": AVAILABLE_SOUNDS,
+                "rgb_modes": ["monochromatic", "breath", "boom", "bark", "speak", "listen"],
+                "look_directions": list(LOOK_DIRECTIONS.keys()),
+                "vision": {"model": "SmolVLM-256M-Q8", "prompts": ["patrol", "describe", "obstacles", "people"]},
+            })
         else:
             self._send_json({"error": f"unknown path: {path}"}, 404)
     
@@ -610,6 +761,119 @@ class BridgeHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "memory not available"}, 503)
 
+
+        elif path == "/behavior/start":
+            global _behavior_engine
+            state_name = body.get("behavior", body.get("state", "patrol"))
+            if _behavior_engine and _behavior_engine.running:
+                result = _behavior_engine.force_state(state_name)
+                self._send_json(result)
+            else:
+                try:
+                    from nox_behavior_engine import BehaviorEngine
+                    _behavior_engine = BehaviorEngine(daemon_send_fn=send_to_daemon)
+                    _behavior_engine.start()
+                    if state_name != "idle":
+                        _behavior_engine.force_state(state_name)
+                    self._send_json({"ok": True, "state": state_name, "restarted": True})
+                except Exception as e:
+                    self._send_json({"error": f"engine restart failed: {e}"}, 500)
+
+        elif path == "/behavior/stop":
+            if _behavior_engine:
+                _behavior_engine.stop()
+                send_to_daemon({"cmd": "sleep"})
+                result = {"ok": True, "stopped": True}
+                self._send_json(result)
+            else:
+                self._send_json({"error": "behavior engine not running"}, 503)
+
+        elif path == "/emergency_stop":
+            r = send_to_daemon({"cmd": "emergency_stop"})
+            if _behavior_engine:
+                _behavior_engine.stop()
+            self._send_json(r)
+
+        elif path == "/move":
+            # Higher-level movement: distance_cm or angle_deg (Sprint 4)
+            direction = body.get("direction", "forward")
+            speed = body.get("speed", 70)
+            if direction in ("forward", "backward"):
+                dist = body.get("distance_cm", 15)
+                steps = max(1, min(30, round(dist / STEP_DISTANCE_CM)))
+            elif direction in ("turn_left", "turn_right"):
+                angle = body.get("angle_deg", 45)
+                steps = max(1, min(20, round(angle / STEP_ANGLE_DEG)))
+            else:
+                steps = body.get("steps", 3)
+            r = send_to_daemon({"cmd": "move", "action": direction, "steps": steps, "speed": speed})
+            r["steps_executed"] = steps
+            r["direction"] = direction
+            self._send_json(r)
+
+        elif path == "/expression":
+            # Predefined emotion expressions (Sprint 4)
+            expr_type = body.get("type", "")
+            if expr_type not in EXPRESSION_MAP:
+                self._send_json({"error": f"unknown expression: {expr_type}", "valid": list(EXPRESSION_MAP.keys())}, 400)
+            else:
+                expr = EXPRESSION_MAP[expr_type]
+                results = []
+                # Head position
+                if "head" in expr:
+                    r = send_to_daemon({"cmd": "head", **expr["head"]})
+                    results.append(r)
+                # RGB LEDs
+                if "rgb" in expr:
+                    r = send_to_daemon({"cmd": "rgb", **expr["rgb"]})
+                    results.append(r)
+                # Actions
+                for action in expr.get("actions", []):
+                    r = send_to_daemon({"cmd": "move", "action": action, "steps": 3, "speed": 80})
+                    results.append(r)
+                # Sound (fire-and-forget in thread)
+                if expr.get("sound"):
+                    threading.Thread(
+                        target=send_to_daemon,
+                        args=({"cmd": "sound", "name": expr["sound"]},),
+                        daemon=True
+                    ).start()
+                # Speak (optional, from request body)
+                speak_text = body.get("speak", "")
+                if speak_text:
+                    threading.Thread(
+                        target=send_to_daemon,
+                        args=({"cmd": "speak", "text": speak_text},),
+                        daemon=True
+                    ).start()
+                self._send_json({
+                    "ok": True,
+                    "expression": expr_type,
+                    "actions": expr.get("actions", []),
+                    "rgb": expr.get("rgb"),
+                    "head": expr.get("head"),
+                    "sound": expr.get("sound"),
+                    "spoke": speak_text or None,
+                })
+
+        elif path == "/look_at":
+            # Semantic head control (Sprint 4)
+            direction = body.get("direction")
+            angle = body.get("angle")
+            tilt = body.get("tilt")
+            if direction and direction in LOOK_DIRECTIONS:
+                target = dict(LOOK_DIRECTIONS[direction])
+            elif angle is not None:
+                target = {"yaw": float(angle), "roll": 0, "pitch": 0}
+            else:
+                target = {"yaw": 0, "roll": 0, "pitch": 0}
+            if tilt is not None:
+                target["pitch"] = float(tilt)
+            if angle is not None and direction:
+                target["yaw"] = float(angle)
+            r = send_to_daemon({"cmd": "head", **target})
+            r["head"] = target
+            self._send_json(r)
         else:
             self._send_json({"error": f"unknown path: {path}"}, 404)
 
@@ -637,24 +901,26 @@ def main():
     print(f"[bridge] Listening on http://{LISTEN_HOST}:{LISTEN_PORT}", flush=True)
     print(f"[bridge] Known faces: {face_db.list_known()}", flush=True)
     
-    # Start autonomous behavior system (optional — disable with NOX_NO_AUTO=1)
+    # Start behavior engine (optional — disable with NOX_NO_AUTO=1)
+    global _behavior_engine
     if not os.environ.get("NOX_NO_AUTO"):
         try:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from nox_autonomous_v2 import AutonomousBehavior
-            auto = AutonomousBehavior(daemon_send_fn=send_to_daemon)
-            auto.start()
-            print("[bridge] Autonomous behavior v2 (mood system) active", flush=True)
+            from nox_behavior_engine import BehaviorEngine
+            _behavior_engine = BehaviorEngine(daemon_send_fn=send_to_daemon)
+            _behavior_engine.start()
+            print("[bridge] Behavior Engine started (FSM + Patrol + Obstacle Avoidance)", flush=True)
         except Exception as e:
-            print(f"[bridge] Auto v2 failed, trying v1: {e}", flush=True)
+            print(f"[bridge] BehaviorEngine failed, trying v2 fallback: {e}", flush=True)
             try:
-                from nox_autonomous import start_autonomous
-                start_autonomous()
-                print("[bridge] Autonomous behavior v1 active (fallback)", flush=True)
+                from nox_autonomous_v2 import AutonomousBehavior
+                auto = AutonomousBehavior(daemon_send_fn=send_to_daemon)
+                auto.start()
+                print("[bridge] Autonomous behavior v2 active (fallback)", flush=True)
             except Exception as e2:
                 print(f"[bridge] Autonomous behavior skipped: {e2}", flush=True)
     else:
-        print("[bridge] Autonomous behavior disabled (NOX_NO_AUTO=1)", flush=True)
+        print("[bridge] Behavior engine disabled (NOX_NO_AUTO=1)", flush=True)
     
     # Memory session start
     if _HAS_MEMORY:
