@@ -90,7 +90,13 @@ Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
 **Brain (AI — Pi 5 or any computer):**
 - Raspberry Pi 5 (4GB+ RAM) or any Linux/Mac
 - Python 3.9+
-- OpenAI API key (or any OpenAI-compatible API)
+- OpenAI API key, or any OpenAI-compatible API (e.g. a local Ollama)
+
+> **Hardware note:** The body services (`nox-body`, `nox-bridge`, `nox-voice`)
+> only run on the robot's Raspberry Pi — they import the SunFounder `pidog`
+> and `robot_hat` SDKs and drive real servos/camera. There is no simulator
+> mode, so they cannot run on a regular PC. The **brain** runs anywhere;
+> without a robot on `PIDOG_HOST` it starts fine but logs connection errors.
 
 ### Installation
 
