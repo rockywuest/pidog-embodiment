@@ -28,8 +28,12 @@ BRIDGE_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
 BASE_URL = f"http://{PIDOG_HOST}:{BRIDGE_PORT}"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = "gpt-4o"  # Better accuracy for structured JSON voice responses
-OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+# Any OpenAI-compatible chat-completions endpoint works. For a local Ollama:
+#   OPENAI_URL=http://127.0.0.1:11434/v1/chat/completions  LLM_MODEL=llama3.2
+# api.openai.com requires OPENAI_API_KEY; local endpoints don't.
+OPENAI_MODEL = os.environ.get("LLM_MODEL", "gpt-4o")  # gpt-4o: better accuracy for structured JSON voice responses
+OPENAI_URL = os.environ.get("OPENAI_URL", "https://api.openai.com/v1/chat/completions")
+LLM_CONFIGURED = bool(OPENAI_API_KEY) or "api.openai.com" not in OPENAI_URL
 
 POLL_INTERVAL = 5.0  # Slow poll; push handles real-time
 SENSOR_CHECK_INTERVAL = 15.0
@@ -147,7 +151,7 @@ def bridge_post(path, data, timeout=15):
 # ─── Claude API ───
 def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     """Call OpenAI-compatible API for voice response."""
-    if not OPENAI_API_KEY:
+    if not LLM_CONFIGURED:
         return None
     
     # OpenAI format: system message is part of messages
@@ -164,7 +168,8 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     body = json.dumps(data).encode()
     req = urllib.request.Request(OPENAI_URL, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {OPENAI_API_KEY}")
+    if OPENAI_API_KEY:
+        req.add_header("Authorization", f"Bearer {OPENAI_API_KEY}")
     
     try:
         with urllib.request.urlopen(req, timeout=25) as resp:
@@ -368,12 +373,12 @@ def main():
     import threading as _th
     _th.Thread(target=start_push_server, daemon=True).start()
 
-    has_api = bool(OPENAI_API_KEY)
+    has_api = LLM_CONFIGURED
     if has_api:
-        print(f"[brain] LLM API available (model: {OPENAI_MODEL})", flush=True)
+        print(f"[brain] LLM API available (model: {OPENAI_MODEL}, url: {OPENAI_URL})", flush=True)
         process_fn = process_voice_intelligent
     else:
-        print("[brain] No API key — using simple fallback", flush=True)
+        print("[brain] No LLM configured (set OPENAI_API_KEY, or OPENAI_URL for a local endpoint) — using simple fallback", flush=True)
         process_fn = process_voice_simple
     
     last_sensor_check = 0

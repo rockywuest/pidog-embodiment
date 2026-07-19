@@ -110,8 +110,11 @@ sudo systemctl start nox-body nox-bridge nox-voice
 # === On the BRAIN (Pi 5 / Desktop) ===
 cd brain
 pip3 install -r requirements.txt
+# Generates the systemd unit for YOUR user/path and creates /etc/default/nox-brain:
 sudo ../scripts/install-brain.sh
-# Put OPENAI_API_KEY (not needed for Ollama) and PIDOG_HOST into /etc/default/nox-brain, then:
+# Edit /etc/default/nox-brain: set PIDOG_HOST (127.0.0.1 if brain and body share
+# one machine) and the LLM backend — OPENAI_API_KEY for OpenAI, or for a local
+# Ollama: OPENAI_URL=http://127.0.0.1:11434/v1/chat/completions + LLM_MODEL=llama3.2
 sudo systemctl start nox-brain
 ```
 
