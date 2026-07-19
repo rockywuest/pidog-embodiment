@@ -93,10 +93,11 @@ Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
 - OpenAI API key, or any OpenAI-compatible API (e.g. a local Ollama)
 
 > **Hardware note:** The body services (`nox-body`, `nox-bridge`, `nox-voice`)
-> only run on the robot's Raspberry Pi — they import the SunFounder `pidog`
-> and `robot_hat` SDKs and drive real servos/camera. There is no simulator
-> mode, so they cannot run on a regular PC. The **brain** runs anywhere;
-> without a robot on `PIDOG_HOST` it starts fine but logs connection errors.
+> only run on the robot's Raspberry Pi — `nox-body` imports the SunFounder
+> `pidog` and `robot_hat` SDKs and drives real servos/camera, and the other
+> two depend on it. There is no simulator mode, so they cannot run on a
+> regular PC. The **brain** runs anywhere; without a robot on `PIDOG_HOST`
+> it starts fine but logs connection errors.
 
 ### Installation
 
@@ -106,16 +107,19 @@ git clone https://github.com/rockywuest/pidog-embodiment.git
 cd pidog-embodiment
 
 # === On the BODY (Pi 4 / Robot) ===
+# First: install SunFounder's pidog + robot_hat SDKs with THEIR installer
+# (https://github.com/sunfounder/pidog), they are not on PyPI-only.
 cd body
-pip3 install -r requirements.txt
+# Raspberry Pi OS Bookworm enforces PEP 668 ("externally-managed-environment"):
+pip3 install --break-system-packages -r requirements.txt
 # Generates the systemd units for YOUR user and repo path, creates nox.env:
 sudo ../scripts/install-body.sh
 # Edit body/nox.env (set BRAIN_HOST — 127.0.0.1 if brain and body share one machine), then:
 sudo systemctl start nox-body nox-bridge nox-voice
 
 # === On the BRAIN (Pi 5 / Desktop) ===
+# No pip install needed — the brain runs on the Python standard library only.
 cd brain
-pip3 install -r requirements.txt
 # Generates the systemd unit for YOUR user/path and creates /etc/default/nox-brain:
 sudo ../scripts/install-brain.sh
 # Edit /etc/default/nox-brain: set PIDOG_HOST (127.0.0.1 if brain and body share
@@ -128,6 +132,14 @@ sudo systemctl start nox-brain
 > reference user and paths. If you did and got
 > *"failed because of unavailable resources or another system error"*, run the
 > install script above; it rewrites `User=` and all paths for your machine.
+
+> **Ollama on a PC (CPU):** local inference is slow — the brain defaults to a
+> 120s LLM timeout for non-OpenAI endpoints (tune with `LLM_TIMEOUT` in
+> `/etc/default/nox-brain`). Small models like `llama3.2` don't always return
+> the JSON the brain asks for; when that happens the dog **speaks the raw reply
+> but performs no actions**. That's the graceful fallback, not a bug — a larger
+> model (e.g. `llama3.1:8b`, `qwen2.5:7b`) follows the JSON format much more
+> reliably.
 
 ### Test It
 
