@@ -11,10 +11,11 @@ ExecStart=/usr/bin/python3 -u nox_voice_brain.py
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-# Set these in /etc/default/nox-brain or override:
-# Environment=OPENAI_API_KEY=your-key
+# Set these in /etc/default/nox-brain (install-brain.sh creates a template):
 # Environment=PIDOG_HOST=pidog.local
-# Environment=LLM_MODEL=gpt-4o-mini
+# Environment=OPENAI_API_KEY=your-key   # cloud only; not needed for Ollama
+# Environment=OPENAI_URL=http://127.0.0.1:11434/v1/chat/completions
+# Environment=LLM_MODEL=llama3.2
 EnvironmentFile=-/etc/default/nox-brain
 
 [Install]

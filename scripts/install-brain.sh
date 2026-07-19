@@ -28,8 +28,29 @@ echo "Installed /etc/systemd/system/nox-brain.service (User=${RUN_USER}, dir=${B
 systemctl daemon-reload
 systemctl enable nox-brain
 
+# The unit reads /etc/default/nox-brain (optional). Create a commented
+# template on first install so users don't have to guess the keys (issue #5).
+if [[ ! -f /etc/default/nox-brain ]]; then
+  cat > /etc/default/nox-brain <<'EOF'
+# Nox Brain configuration — read by nox-brain.service on start.
+# Uncomment and adjust what you need, then: sudo systemctl restart nox-brain
+
+# Where the robot body's bridge runs (127.0.0.1 if brain and body share one machine):
+#PIDOG_HOST=pidog.local
+
+# LLM backend — any OpenAI-compatible chat-completions endpoint.
+# Cloud (OpenAI): set the key, keep the default URL/model:
+#OPENAI_API_KEY=sk-...
+# Local (Ollama): no key needed, point at Ollama and pick your model:
+#OPENAI_URL=http://127.0.0.1:11434/v1/chat/completions
+#LLM_MODEL=llama3.2
+EOF
+  chmod 600 /etc/default/nox-brain
+  echo "Created /etc/default/nox-brain (template — edit it, then start the service)"
+else
+  echo "Kept existing /etc/default/nox-brain"
+fi
+
 echo
-echo "Set your API key and robot address in /etc/default/nox-brain, e.g.:"
-echo "  OPENAI_API_KEY=your-key        # only needed for OpenAI-compatible APIs, not Ollama"
-echo "  PIDOG_HOST=your-robot.local"
+echo "Edit /etc/default/nox-brain (robot address + LLM backend),"
 echo "then: sudo systemctl start nox-brain"
