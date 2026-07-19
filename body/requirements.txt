@@ -1,5 +1,13 @@
 # Body-side dependencies
 # Most are pre-installed on Raspberry Pi OS
+#
+# NOT listed here: the SunFounder SDKs `pidog` and `robot_hat` — install
+# them with SunFounder's own installer (they set up GPIO/I2C system deps):
+#   https://github.com/sunfounder/pidog  →  docs "Install All the Modules"
+# nox-body will fail with ModuleNotFoundError without them.
+#
+# On Raspberry Pi OS Bookworm (PEP 668) install with:
+#   pip3 install --break-system-packages -r requirements.txt
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
 vosk>=0.3.45

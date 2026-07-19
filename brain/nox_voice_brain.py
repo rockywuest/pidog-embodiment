@@ -17,6 +17,7 @@ import sys
 import json
 import time
 import base64
+import socket
 import urllib.request
 import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -34,6 +35,10 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("LLM_MODEL", "gpt-4o")  # gpt-4o: better accuracy for structured JSON voice responses
 OPENAI_URL = os.environ.get("OPENAI_URL", "https://api.openai.com/v1/chat/completions")
 LLM_CONFIGURED = bool(OPENAI_API_KEY) or "api.openai.com" not in OPENAI_URL
+# Local CPU inference (Ollama on a PC) routinely needs 60-120s per reply,
+# cloud APIs a few seconds — default accordingly, override via LLM_TIMEOUT.
+LLM_TIMEOUT = int(os.environ.get(
+    "LLM_TIMEOUT", "30" if "api.openai.com" in OPENAI_URL else "120"))
 
 POLL_INTERVAL = 5.0  # Slow poll; push handles real-time
 SENSOR_CHECK_INTERVAL = 15.0
@@ -172,11 +177,17 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
         req.add_header("Authorization", f"Bearer {OPENAI_API_KEY}")
     
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
             result = json.loads(resp.read().decode())
             return result.get("choices", [{}])[0].get("message", {}).get("content", "")
     except Exception as e:
-        print(f"[brain] LLM API error: {e}", flush=True)
+        # urllib wraps timeouts in URLError(reason=socket.timeout)
+        reason = getattr(e, "reason", e)
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            print(f"[brain] LLM timed out after {LLM_TIMEOUT}s (model: {OPENAI_MODEL}) — "
+                  f"local CPU inference can be slow; raise LLM_TIMEOUT if this repeats", flush=True)
+        else:
+            print(f"[brain] LLM API error: {e}", flush=True)
         return None
 
 
@@ -189,7 +200,7 @@ def parse_response(text):
             end = text.rfind("}") + 1
             data = json.loads(text[start:end])
             return data
-    except:
+    except Exception:
         pass
     
     # Plain text response
@@ -280,8 +291,9 @@ def process_voice_intelligent(msg):
         
         print(f"[brain] Response: '{speak_text}' actions={actions} emotion={emotion}", flush=True)
     else:
-        # Fallback: simple response
-        bridge_post("/speak", {"text": f"I heard: {text}. But my brain is not reachable right now."})
+        # Fallback: the LLM call failed (timeout, API error) — the bridge
+        # itself is fine, so don't claim the brain is unreachable.
+        bridge_post("/speak", {"text": f"I heard: {text}. I'm still thinking — give me a moment and try again."})
 
 
 # ─── Simple Fallback (no API key) ───

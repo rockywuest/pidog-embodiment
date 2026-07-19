@@ -1,4 +1,7 @@
-# Brain-side dependencies
-onnxruntime>=1.16.0
-opencv-python-headless>=4.8.0
-numpy>=1.24.0
+# The brain has NO third-party dependencies — it runs on the Python
+# standard library only (urllib, http.server, json, threading, ...).
+# There is nothing to pip-install for the brain; this file exists so
+# tooling that expects a requirements.txt finds an (empty) one.
+#
+# Face recognition (onnxruntime/opencv/numpy) runs on the BODY, not here —
+# see body/requirements.txt.
