@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11"]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
       - name: Checkout code
@@ -28,9 +28,10 @@ jobs:
         run: python -m pip install --upgrade pip
 
       - name: Install dependencies
+        # body deps are best-effort (vosk/piper wheels are Pi-focused);
+        # the brain is stdlib-only, nothing to install there.
         run: |
           pip install -r body/requirements.txt || true
-          pip install -r brain/requirements.txt || true
 
       - name: Lint with Ruff
         run: |

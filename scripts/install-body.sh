@@ -27,11 +27,20 @@ if ! id "$RUN_USER" >/dev/null 2>&1 || [[ "$RUN_USER" == "root" ]]; then
   exit 1
 fi
 
+RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+
 ENV_CREATED=0
 if [[ ! -f "$BODY_DIR/nox.env" ]]; then
   cp "$BODY_DIR/nox.env.example" "$BODY_DIR/nox.env"
   chown "$RUN_USER": "$BODY_DIR/nox.env"
   ENV_CREATED=1
+fi
+
+# Old templates shipped literal <PLACEHOLDER> values; services started with
+# those fail with cryptic DNS errors. Refuse to (re)start until they're gone.
+ENV_HAS_PLACEHOLDERS=0
+if grep -q '[<>]' "$BODY_DIR/nox.env"; then
+  ENV_HAS_PLACEHOLDERS=1
 fi
 
 for unit in "${UNITS[@]}"; do
@@ -40,7 +49,9 @@ for unit in "${UNITS[@]}"; do
     echo "Unknown unit: $unit (no $src)" >&2
     exit 1
   fi
+  # ~/.local/bin belongs to the user's home, everything else to the repo dir.
   sed -e "s|^User=.*|User=${RUN_USER}|" \
+      -e "s|/home/pidog/.local/bin|${RUN_HOME}/.local/bin|g" \
       -e "s|/home/pidog|${BODY_DIR}|g" \
       "$src" > "/etc/systemd/system/${unit}.service"
   echo "Installed /etc/systemd/system/${unit}.service (User=${RUN_USER}, dir=${BODY_DIR})"
@@ -49,7 +60,13 @@ done
 systemctl daemon-reload
 systemctl enable "${UNITS[@]}"
 
-if [[ $ENV_CREATED -eq 1 ]]; then
+if [[ $ENV_HAS_PLACEHOLDERS -eq 1 ]]; then
+  echo
+  echo "WARNING: $BODY_DIR/nox.env still contains <PLACEHOLDER> values." >&2
+  echo "Edit it (at least BRAIN_HOST — the IP of your brain machine, or 127.0.0.1" >&2
+  echo "if brain and body share one machine), then:" >&2
+  echo "  sudo systemctl restart ${UNITS[*]}" >&2
+elif [[ $ENV_CREATED -eq 1 ]]; then
   echo
   echo "Created $BODY_DIR/nox.env from the example."
   echo "Edit it (at least BRAIN_HOST — use 127.0.0.1 if brain and body share one machine), then:"
