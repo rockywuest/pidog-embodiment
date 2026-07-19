@@ -102,20 +102,23 @@ cd pidog-embodiment
 # === On the BODY (Pi 4 / Robot) ===
 cd body
 pip3 install -r requirements.txt
-# Copy your robot's control daemon (or use the included PiDog one)
-sudo cp services/nox-*.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now nox-body nox-bridge nox-voice
+# Generates the systemd units for YOUR user and repo path, creates nox.env:
+sudo ../scripts/install-body.sh
+# Edit body/nox.env (set BRAIN_HOST — 127.0.0.1 if brain and body share one machine), then:
+sudo systemctl start nox-body nox-bridge nox-voice
 
 # === On the BRAIN (Pi 5 / Desktop) ===
 cd brain
 pip3 install -r requirements.txt
-export OPENAI_API_KEY="your-key-here"
-export PIDOG_HOST="your-robot.local"  # or IP address
-sudo cp services/nox-brain.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now nox-brain
+sudo ../scripts/install-brain.sh
+# Put OPENAI_API_KEY (not needed for Ollama) and PIDOG_HOST into /etc/default/nox-brain, then:
+sudo systemctl start nox-brain
 ```
+
+> **Note:** Don't copy the `services/*.service` files verbatim — they contain a
+> reference user and paths. If you did and got
+> *"failed because of unavailable resources or another system error"*, run the
+> install script above; it rewrites `User=` and all paths for your machine.
 
 ### Test It
 
