@@ -21,9 +21,12 @@ os.environ["SDL_AUDIODRIVER"] = "alsa"
 os.environ["AUDIODEV"] = "plughw:3,0"
 
 # ─── Config ───
-VOSK_MODEL_PATH = "/home/pidog/vosk-models/vosk-model-small-de-0.15"
-PIPER_BIN = "/home/pidog/.local/bin/piper"
-PIPER_MODEL = "/home/pidog/.local/share/piper-voices/de_DE-thorsten-high.onnx"
+VOSK_MODEL_PATH = os.environ.get(
+    "VOSK_MODEL_PATH",
+    os.path.expanduser("~/vosk-models/vosk-model-small-de-0.15"),
+)
+PIPER_BIN = os.path.expanduser("~/.local/bin/piper")
+PIPER_MODEL = os.path.expanduser("~/.local/share/piper-voices/de_DE-thorsten-high.onnx")
 NOX_DAEMON_HOST = "localhost"
 NOX_DAEMON_PORT = 9999
 CLAWDBOT_HOST = os.environ.get("CLAWDBOT_HOST", "192.168.1.18")

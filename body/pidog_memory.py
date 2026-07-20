@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional, List, Dict
 
 # === Configuration ===
-MEMORY_ROOT = Path(os.environ.get("PIDOG_MEMORY_DIR", "/home/pidog/memory"))
+MEMORY_ROOT = Path(os.environ.get("PIDOG_MEMORY_DIR", str(Path.home() / "memory")))
 ACTIVE_DIR = MEMORY_ROOT / "active"
 CORE_DIR = MEMORY_ROOT / "core"
 SESSION_FILE = MEMORY_ROOT / ".session_state.json"
@@ -38,9 +38,13 @@ _last_store_time = 0
 MIN_STORE_INTERVAL = 60           # seconds between regular stores
 HIGH_PRIORITY_TAGS = {"touch", "person", "social", "face", "battery_low"}
 
-# Create directories
-ACTIVE_DIR.mkdir(parents=True, exist_ok=True)
-CORE_DIR.mkdir(parents=True, exist_ok=True)
+# Create directories. Never crash the importer over this — a bridge without
+# memory is degraded, a bridge that dies at import is dead (issue #5).
+try:
+    ACTIVE_DIR.mkdir(parents=True, exist_ok=True)
+    CORE_DIR.mkdir(parents=True, exist_ok=True)
+except OSError as _e:
+    print(f"[memory] WARNING: cannot create {MEMORY_ROOT}: {_e} — memory storage unavailable", flush=True)
 
 # Session state
 _session_retrieved: set = set()
