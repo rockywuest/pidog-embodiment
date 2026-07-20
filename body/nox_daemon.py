@@ -40,9 +40,9 @@ os.environ["AUDIODEV"] = _PLAYBACK_DEVICE
 
 SOCKET_PATH = "/tmp/nox.sock"
 PHOTO_DIR = "/tmp"
-PIPER_BIN = "/home/pidog/.local/bin/piper"
-PIPER_MODEL = "/home/pidog/.local/share/piper-voices/de_DE-thorsten-high.onnx"
-SOUNDS_DIR = "/home/pidog/pidog/sounds"
+PIPER_BIN = os.path.expanduser("~/.local/bin/piper")
+PIPER_MODEL = os.path.expanduser("~/.local/share/piper-voices/de_DE-thorsten-high.onnx")
+SOUNDS_DIR = os.path.expanduser("~/pidog/sounds")
 
 # ─── Ultrasonic distance sensor (separate from PiDog to avoid Process hang) ───
 ultrasonic = None
