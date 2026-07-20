@@ -29,10 +29,10 @@ import time
 import subprocess
 import json
 
-PIDOG_DIR = "/home/pidog/pidog"
+PIDOG_DIR = os.path.expanduser("~/pidog")
 SOUNDS_DIR = os.path.join(PIDOG_DIR, "sounds")
-PIPER_BIN = "/home/pidog/.local/bin/piper"
-PIPER_MODEL = "/home/pidog/.local/share/piper-voices/de_DE-thorsten-high.onnx"
+PIPER_BIN = os.path.expanduser("~/.local/bin/piper")
+PIPER_MODEL = os.path.expanduser("~/.local/share/piper-voices/de_DE-thorsten-high.onnx")
 
 sys.path.insert(0, os.path.join(PIDOG_DIR, "gpt_examples"))
 

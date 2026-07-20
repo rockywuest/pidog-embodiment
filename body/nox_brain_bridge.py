@@ -25,11 +25,14 @@ import signal
 # Behavior engine reference (set in main())
 _behavior_engine = None
 
-# Memory integration
+# Memory integration. Catch Exception, not just ImportError: the module runs
+# filesystem setup at import time, and e.g. a PermissionError from that must
+# degrade to "no memory", not kill the bridge (issue #5).
 try:
     import pidog_memory
     _HAS_MEMORY = True
-except ImportError:
+except Exception as _e:
+    print(f"[bridge] pidog_memory unavailable ({_e}) — running without memory", flush=True)
     _HAS_MEMORY = False
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -45,12 +48,16 @@ DAEMON_PORT = 9999
 BRAIN_HOST = os.environ.get("BRAIN_HOST", "192.168.1.18")
 BRAIN_CALLBACK_PORT = int(os.environ.get("BRAIN_CALLBACK_PORT", "8889"))
 PHOTO_DIR = "/tmp"
-FACE_DB_DIR = "/home/pidog/nox_face_db"
+HOME_DIR = os.path.expanduser("~")
+FACE_DB_DIR = os.environ.get("NOX_FACE_DB_DIR", os.path.join(HOME_DIR, "nox_face_db"))
 PERCEPTION_INTERVAL = 2.0  # seconds between auto-perception cycles
 VISION_RESULT_FILE = "/tmp/nox_vision_latest.json"
 
-# Ensure directories exist
-os.makedirs(FACE_DB_DIR, exist_ok=True)
+# Ensure directories exist — degrade instead of dying if the path is unwritable
+try:
+    os.makedirs(FACE_DB_DIR, exist_ok=True)
+except OSError as _e:
+    print(f"[bridge] WARNING: cannot create {FACE_DB_DIR}: {_e} — face DB disabled", flush=True)
 
 # ─── Sprint 4: Expression + Movement Constants ───
 EXPRESSION_MAP = {
@@ -216,8 +223,8 @@ def get_face_engine():
         try:
             from nox_face_recognition import FaceEngine
             _face_engine = FaceEngine(
-                model_dir="/home/pidog/models",
-                db_dir="/home/pidog/face_db"
+                model_dir=os.path.join(HOME_DIR, "models"),
+                db_dir=os.path.join(HOME_DIR, "face_db")
             )
             print("[bridge] SCRFD+ArcFace face engine loaded", flush=True)
         except Exception as e:

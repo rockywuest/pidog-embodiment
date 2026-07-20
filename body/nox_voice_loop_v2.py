@@ -29,7 +29,10 @@ import urllib.request
 os.environ["SDL_AUDIODRIVER"] = "alsa"
 
 # ─── Config ───
-VOSK_MODEL_PATH = "/home/pidog/vosk-models/vosk-model-small-de-0.15"
+VOSK_MODEL_PATH = os.environ.get(
+    "VOSK_MODEL_PATH",
+    os.path.expanduser("~/vosk-models/vosk-model-small-de-0.15"),
+)
 BRIDGE_HOST = "localhost"
 BRIDGE_PORT = 8888
 DAEMON_HOST = "localhost"
@@ -263,6 +266,14 @@ def main():
     print("[voice-v2] Starting Nox voice loop v2.2 (fuzzy wake words + energy gate)...", flush=True)
 
     from vosk import Model, KaldiRecognizer
+
+    if not os.path.isdir(VOSK_MODEL_PATH):
+        # Exit 0 on purpose: Restart=on-failure would otherwise crash-loop the
+        # service on every machine that hasn't downloaded a model yet.
+        print(f"[voice-v2] Vosk model not found: {VOSK_MODEL_PATH}", flush=True)
+        print("[voice-v2] Download one from https://alphacephei.com/vosk/models and unzip it there,", flush=True)
+        print("[voice-v2] or set VOSK_MODEL_PATH in nox.env. Voice input stays off until then.", flush=True)
+        sys.exit(0)
 
     print(f"[voice-v2] Loading Vosk model: {VOSK_MODEL_PATH}", flush=True)
     model = Model(VOSK_MODEL_PATH)

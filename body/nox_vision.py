@@ -27,11 +27,11 @@ import signal
 
 # llama.cpp binary — try mtmd first (newer), fallback to llava
 _LLAMA_BINS = [
-    "/home/pidog/llama.cpp/build/bin/llama-mtmd-cli",
-    "/home/pidog/llama.cpp/build/bin/llama-llava-cli",
+    os.path.expanduser("~/llama.cpp/build/bin/llama-mtmd-cli"),
+    os.path.expanduser("~/llama.cpp/build/bin/llama-llava-cli"),
 ]
-MODEL_PATH = "/home/pidog/models/smolvlm/SmolVLM-256M-Instruct-Q8_0.gguf"
-MMPROJ_PATH = "/home/pidog/models/smolvlm/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf"
+MODEL_PATH = os.path.expanduser("~/models/smolvlm/SmolVLM-256M-Instruct-Q8_0.gguf")
+MMPROJ_PATH = os.path.expanduser("~/models/smolvlm/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf")
 RESULT_FILE = "/tmp/nox_vision_latest.json"
 PHOTO_PATH = "/tmp/nox_vision_frame.jpg"
 
