@@ -35,13 +35,22 @@ def _find_hifiberry_card():
     print("[nox] HifiBerry not found, falling back to plughw:3,0", flush=True)
     return "plughw:3,0"
 
-_PLAYBACK_DEVICE = _find_hifiberry_card()
+# nox.env may pin AUDIODEV for robots whose speaker isn't auto-detectable
+_PLAYBACK_DEVICE = os.environ.get("AUDIODEV") or _find_hifiberry_card()
 os.environ["AUDIODEV"] = _PLAYBACK_DEVICE
 
 SOCKET_PATH = "/tmp/nox.sock"
 PHOTO_DIR = "/tmp"
-PIPER_BIN = os.path.expanduser("~/.local/bin/piper")
-PIPER_MODEL = os.path.expanduser("~/.local/share/piper-voices/de_DE-thorsten-high.onnx")
+def _find_piper():
+    """pip installs the piper CLI to ~/.local/bin OR /usr/local/bin depending on how it was run."""
+    local = os.path.expanduser("~/.local/bin/piper")
+    if os.path.exists(local):
+        return local
+    import shutil
+    return shutil.which("piper") or local
+
+PIPER_BIN = os.environ.get("PIPER_BIN") or _find_piper()
+PIPER_MODEL = os.environ.get("PIPER_MODEL") or os.path.expanduser("~/.local/share/piper-voices/de_DE-thorsten-high.onnx")
 SOUNDS_DIR = os.path.expanduser("~/pidog/sounds")
 
 # ─── Ultrasonic distance sensor (separate from PiDog to avoid Process hang) ───
@@ -361,6 +370,18 @@ def cmd_speak(text):
     # Guard: empty or whitespace-only text crashes Piper
     if not text or not text.strip():
         return {"ok": False, "error": "empty text"}
+    # Fail loudly instead of returning ok while the async pipeline dies (issue #5):
+    # piper voice models are NOT installed by pip — the user must download one.
+    if not os.path.exists(PIPER_MODEL):
+        return {"ok": False, "error": (
+            f"piper voice model not found: {PIPER_MODEL} — download a voice from "
+            "https://huggingface.co/rhasspy/piper-voices and set PIPER_MODEL in nox.env"
+        )}
+    if not os.path.exists(PIPER_BIN):
+        return {"ok": False, "error": (
+            f"piper binary not found: {PIPER_BIN} — pip3 install piper-tts, "
+            "or set PIPER_BIN in nox.env"
+        )}
 
     def _tts_pipeline(speak_text):
         import subprocess as sp
