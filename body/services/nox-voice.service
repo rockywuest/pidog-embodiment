@@ -14,7 +14,7 @@ RestartSec=10
 Environment=PATH=/home/pidog/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 Environment=SDL_AUDIODRIVER=alsa
-Environment=AUDIODEV=plughw:3,0
+# AUDIODEV intentionally not set: the voice loop auto-detects the USB mic.
 
 [Install]
 WantedBy=multi-user.target

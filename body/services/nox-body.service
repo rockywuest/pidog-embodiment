@@ -13,7 +13,8 @@ RestartSec=5
 Environment=PATH=/home/pidog/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 Environment=SDL_AUDIODRIVER=alsa
-Environment=AUDIODEV=plughw:3,0
+# AUDIODEV intentionally not set here: the daemon auto-detects the speaker;
+# pin it in nox.env instead if detection picks the wrong card.
 
 [Install]
 WantedBy=multi-user.target
