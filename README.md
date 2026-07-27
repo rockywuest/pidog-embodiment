@@ -294,6 +294,8 @@ On-device scene understanding via llama.cpp — no cloud, no Python ML framework
 
 ```bash
 # Build llama.cpp on Pi 4 (one-time, ~20 min)
+# Prerequisite: the build tools (skipping this gives "cmake: command not found")
+sudo apt update && sudo apt install -y cmake build-essential
 cd ~ && git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
 cd llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NEON=ON
 cmake --build build --config Release -j2
