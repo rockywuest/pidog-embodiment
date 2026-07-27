@@ -569,8 +569,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         
         if path == "/action":
-            # Execute body action(s)
-            actions = body.get("actions", [])
+            # Execute body action(s). Accept both {"actions": [...]} (array) and
+            # the singular {"action": "sit"} — the latter is what people reach for
+            # first, and silently returning ok with no movement is a footgun.
+            actions = body.get("actions")
+            if actions is None and "action" in body:
+                actions = [body["action"]]
+            if not actions:
+                self._send_json({
+                    "ok": False,
+                    "error": "no action given",
+                    "hint": 'send {"action": "sit"} or {"actions": ["sit", "wag_tail"]}',
+                    "valid_actions": VALID_ACTIONS,
+                })
+                return
+            if isinstance(actions, str):
+                actions = [actions]
             results = []
             for action in actions:
                 if isinstance(action, str):
@@ -580,7 +594,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 else:
                     r = {"error": f"invalid action: {action}"}
                 results.append(r)
-            self._send_json({"ok": True, "results": results})
+            ok = all(not (isinstance(r, dict) and r.get("error")) for r in results)
+            self._send_json({"ok": ok, "results": results})
         
         elif path == "/speak":
             # Speak text (non-blocking: respond immediately, speak in background)
