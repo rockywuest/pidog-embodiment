@@ -141,6 +141,28 @@ sudo systemctl start nox-brain
 > model (e.g. `llama3.1:8b`, `qwen2.5:7b`) follows the JSON format much more
 > reliably.
 
+### Nox Mode vs. SunFounder Examples
+
+The install script *enables* the body services, so Nox starts on every boot and
+holds the robot's hardware (servos, touch, sound direction, ultrasonic). If you
+then run SunFounder's own example scripts, their init fails with lines like
+`dual_touch init ... fail` — both sides want exclusive access. Don't `kill` the
+Python processes by hand (the SDK forks a helper child; killing the parent
+leaves orphans). Switch modes via systemd instead:
+
+```bash
+# Run SunFounder examples (stops Nox until next boot):
+sudo systemctl stop nox-body nox-bridge nox-voice
+
+# Back to Nox mode:
+sudo systemctl start nox-body nox-bridge nox-voice
+
+# Make SunFounder mode survive reboots (Nox off at boot):
+sudo systemctl disable nox-body nox-bridge nox-voice
+# ...and to restore Nox autostart:
+sudo systemctl enable --now nox-body nox-bridge nox-voice
+```
+
 ### Test It
 
 ```bash
