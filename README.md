@@ -163,12 +163,27 @@ sudo systemctl disable nox-body nox-bridge nox-voice
 sudo systemctl enable --now nox-body nox-bridge nox-voice
 ```
 
+### Health Check
+
+Not sure everything came up correctly? Run the doctor on the robot (and/or the
+brain) — it auto-detects the role and checks services, the bridge API, the
+battery, and the voice/vision models, with a fix hint for anything that's off:
+
+```bash
+./scripts/doctor.sh
+```
+
 ### Test It
 
 ```bash
 # From the brain machine:
 # Check robot status
 curl http://your-robot.local:8888/status
+
+# Make it sit (singular or an array of actions both work)
+curl -X POST http://your-robot.local:8888/action \
+  -H "Content-Type: application/json" \
+  -d '{"action": "sit"}'
 
 # Make it speak
 curl -X POST http://your-robot.local:8888/speak \
