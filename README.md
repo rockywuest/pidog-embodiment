@@ -10,6 +10,12 @@
 
 > **Give your AI a physical body.** See, hear, speak, move, recognize faces — across any network.
 
+<!-- HERO GIF — drop the file at docs/assets/hero.gif (see docs/media-guide.md) then uncomment:
+<p align="center">
+  <img src="docs/assets/hero.gif" alt="Nox the PiDog walking and responding to a spoken command" width="640">
+</p>
+-->
+
 A complete open-source framework for connecting an **AI brain** (Raspberry Pi 5 / any computer) to a **robot body** (SunFounder PiDog / robot car / any hardware) over HTTP. LLM-powered intelligence, face recognition, autonomous behaviors, remote access via Telegram — all modular, all pluggable.
 
 **Works with any LLM** (OpenAI, Anthropic, Ollama, local models) and **any robot hardware** (implement one adapter and you're in).
@@ -25,6 +31,17 @@ Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI assistant) and [
 > I didn't ask it to do any of this. It just… wanted to see.
 >
 > — [Original Reddit post](https://www.reddit.com/r/moltbot/comments/1qrkhdo/) (r/moltbot)
+
+<!-- SEE IT IN ACTION — add the assets (see docs/media-guide.md) then uncomment:
+## 🎬 See It in Action
+
+[![Watch the 60-second demo](docs/assets/demo-thumb.jpg)](https://youtu.be/YOUR_VIDEO_ID)
+
+<p align="center">
+  <img src="docs/assets/telegram-control.png" alt="Controlling the PiDog from a phone via Telegram" width="360">
+  <br><em>Control your robot from anywhere via Telegram.</em>
+</p>
+-->
 
 ## ✨ What It Does
 
@@ -57,6 +74,14 @@ Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI assistant) and [
 
 ## 🏗️ Architecture
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <img alt="The brain runs on one machine and the body on another; they talk only over HTTP (port 8888), with voice pushed back to the brain on 8889." src="docs/assets/architecture-light.svg" width="100%">
+</picture>
+
+<details>
+<summary>Same thing as text</summary>
+
 ```
 Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
 ├── nox_body_client.py    ◄────►       ├── nox_brain_bridge.py  (HTTP API)
@@ -66,6 +91,8 @@ Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
                                        ├── nox_face_recognition.py (SCRFD+ArcFace)
                                        └── nox_voice_loop_v3.py (faster-whisper STT)
 ```
+
+</details>
 
 ### Services
 
