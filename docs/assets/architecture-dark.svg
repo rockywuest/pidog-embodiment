@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Architecture: an AI brain on one machine talks to a robot body on another over HTTP.">
+  <defs>
+    <style>
+      .name { font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace; font-size: 13px; fill: #ffffff; }
+      .role { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; fill: #ffffff; opacity: .82; }
+      .title { font-size: 22px; font-weight: 700; fill: #e6edf3; }
+      .sub { font-size: 14px; fill: #8b949e; }
+      .cap { font-size: 13px; fill: #8b949e; }
+      .hdr { font-size: 15px; font-weight: 700; letter-spacing: .08em; }
+      .pill { font-size: 13px; font-weight: 600; fill: #e6edf3; }
+    </style>
+    <marker id="al" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M8 0.5 L1 4.5 L8 8.5 Z" fill="#8b949e"/></marker>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="2" refY="4.5" orient="auto"><path d="M1 0.5 L8 4.5 L1 8.5 Z" fill="#8b949e"/></marker>
+  </defs>
+
+  <text x="450" y="38" text-anchor="middle" class="title">One framework, split over the network</text>
+  <text x="450" y="60" text-anchor="middle" class="sub">The brain thinks. The body moves. HTTP is the whole contract between them.</text>
+
+  <!-- BRAIN panel -->
+  <rect x="40" y="86" width="352" height="250" rx="14" fill="#101a30" stroke="#3b82f6" stroke-width="2"/>
+  <circle cx="66" cy="114" r="6" fill="#3b82f6"/>
+  <text x="82" y="119" class="hdr" fill="#93c5fd">BRAIN</text>
+  <text x="352" y="119" text-anchor="end" class="sub" font-size="12">Pi 5 / desktop / cloud</text>
+
+  <g>
+    <rect x="58" y="134" width="316" height="42" rx="8" fill="#2563eb"/>
+    <text x="72" y="160" class="name">nox_voice_brain.py</text><text x="360" y="160" text-anchor="end" class="role">LLM reasoning</text>
+    <rect x="58" y="184" width="316" height="42" rx="8" fill="#2563eb"/>
+    <text x="72" y="210" class="name">nox_body_client.py</text><text x="360" y="210" text-anchor="end" class="role">→ body API</text>
+    <rect x="58" y="234" width="316" height="42" rx="8" fill="#2563eb"/>
+    <text x="72" y="260" class="name">nox_voice_relay.py</text><text x="360" y="260" text-anchor="end" class="role">3-tier voice</text>
+    <rect x="58" y="284" width="316" height="42" rx="8" fill="#2563eb" opacity=".72"/>
+    <text x="72" y="310" class="name">telegram_bot.py</text><text x="360" y="310" text-anchor="end" class="role">remote · opt</text>
+  </g>
+
+  <!-- BODY panel -->
+  <rect x="508" y="86" width="352" height="360" rx="14" fill="#2a0f16" stroke="#e23b63" stroke-width="2"/>
+  <circle cx="534" cy="114" r="6" fill="#e23b63"/>
+  <text x="550" y="119" class="hdr" fill="#f2789c">BODY</text>
+  <text x="844" y="119" text-anchor="end" class="sub" font-size="12">Pi 4 / the robot</text>
+
+  <g>
+    <rect x="526" y="134" width="316" height="42" rx="8" fill="#c51a4a"/>
+    <text x="540" y="160" class="name">nox_brain_bridge.py</text><text x="828" y="160" text-anchor="end" class="role">HTTP :8888</text>
+    <rect x="526" y="184" width="316" height="42" rx="8" fill="#c51a4a"/>
+    <text x="540" y="210" class="name">nox_daemon.py</text><text x="828" y="210" text-anchor="end" class="role">servos · TCP :9999</text>
+    <rect x="526" y="234" width="316" height="42" rx="8" fill="#c51a4a"/>
+    <text x="540" y="260" class="name">nox_behavior_engine.py</text><text x="828" y="260" text-anchor="end" class="role">FSM · patrol</text>
+    <rect x="526" y="284" width="316" height="42" rx="8" fill="#c51a4a"/>
+    <text x="540" y="310" class="name">nox_vision.py</text><text x="828" y="310" text-anchor="end" class="role">SmolVLM</text>
+    <rect x="526" y="334" width="316" height="42" rx="8" fill="#c51a4a"/>
+    <text x="540" y="360" class="name">nox_face_recognition.py</text><text x="828" y="360" text-anchor="end" class="role">SCRFD+ArcFace</text>
+    <rect x="526" y="384" width="316" height="42" rx="8" fill="#c51a4a"/>
+    <text x="540" y="410" class="name">nox_voice_loop_v3.py</text><text x="828" y="410" text-anchor="end" class="role">STT</text>
+  </g>
+
+  <!-- link spine -->
+  <line x1="398" y1="196" x2="502" y2="196" stroke="#8b949e" stroke-width="2" marker-end="url(#al)"/>
+  <line x1="502" y1="230" x2="398" y2="230" stroke="#8b949e" stroke-width="2" marker-end="url(#ar)"/>
+  <rect x="406" y="174" width="88" height="22" rx="11" fill="#161b22" stroke="#8b949e"/>
+  <text x="450" y="189" text-anchor="middle" class="pill">HTTP :8888</text>
+  <rect x="404" y="230" width="92" height="22" rx="11" fill="#161b22" stroke="#8b949e"/>
+  <text x="450" y="245" text-anchor="middle" class="pill" font-size="12">callback :8889</text>
+
+  <text x="450" y="478" text-anchor="middle" class="cap">Any LLM · any network · any robot — implement one adapter and you're in.</text>
+</svg>
