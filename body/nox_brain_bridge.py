@@ -356,7 +356,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         if length > 0:
             body = self.rfile.read(length)
-            return json.loads(body)
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError as e:
+                # Broken shell quoting is the #1 cause here (issue #12): the
+                # handler must answer loudly, not crash with an empty reply.
+                return {
+                    "_json_error": str(e),
+                    "_raw": body[:120].decode("utf-8", errors="replace"),
+                }
         return {}
     
     def do_OPTIONS(self):
@@ -567,7 +575,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
         body = self._read_json()
-        
+        if "_json_error" in body:
+            self._send_json({
+                "ok": False,
+                "error": f"request body is not valid JSON: {body['_json_error']}",
+                "received": body["_raw"],
+                "hint": "quote with single quotes OUTSIDE, double quotes INSIDE: "
+                        "curl -X POST http://<host>:8888/action "
+                        "-H 'Content-Type: application/json' -d '{\"action\": \"sit\"}'",
+            }, 400)
+            return
+
         if path == "/action":
             # Execute body action(s). Accept both {"actions": [...]} (array) and
             # the singular {"action": "sit"} — the latter is what people reach for

@@ -103,11 +103,26 @@ if [[ $IS_BODY -eq 1 ]]; then
     if [[ -n "$status_json" ]]; then
       pass "bridge answers on :${BRIDGE_PORT}/status"
       if printf '%s' "$status_json" | grep -q '"battery_v": *"error"'; then
-        warn "battery_v is \"error\" — the robot can't read its battery"
-        hint "servos are powered by the 2-cell battery, NOT USB-C: charge it,"
-        hint "plug it in, switch it on — otherwise actions return ok but the dog won't move"
+        berr="$(printf '%s' "$status_json" | sed -n 's/.*"battery_error": *"\([^"]*\)".*/\1/p')"
+        warn "battery_v is \"error\" — the daemon can't READ the battery voltage${berr:+ (${berr})}"
+        hint "if the dog also won't move: check the 2-cell battery — servos run on it, NOT USB-C"
+        hint "if the dog moves fine, only the ADC read fails; test it directly:"
+        hint "  python3 -c 'from robot_hat import utils; print(utils.get_battery_voltage())'"
+        [[ -z "$berr" ]] && hint "no battery_error detail — update + restart: git pull && sudo systemctl restart nox-body"
       elif printf '%s' "$status_json" | grep -qE '"battery_v": *[0-9]'; then
         pass "battery voltage readable ($(printf '%s' "$status_json" | grep -oE '"battery_v": *[0-9.]+' | head -1 | grep -oE '[0-9.]+')V)"
+      fi
+
+      # Is the RUNNING bridge process on current code? An empty /action POST
+      # must error loudly (issue #13); a silent ok means the service was never
+      # restarted after git pull. Harmless probe: no action is ever executed.
+      action_probe="$(curl -s --max-time 5 -X POST "http://127.0.0.1:${BRIDGE_PORT}/action" \
+        -H 'Content-Type: application/json' -d '{}' 2>/dev/null)"
+      if printf '%s' "$action_probe" | grep -q 'no action given'; then
+        pass "running bridge is on current code (/action errors loudly on empty input)"
+      elif printf '%s' "$action_probe" | grep -q '"ok": *true'; then
+        fail "running bridge is on OUTDATED code — /action still swallows empty input silently"
+        hint "cd $REPO_DIR && git pull && sudo systemctl restart nox-bridge nox-body"
       fi
     else
       fail "no response from bridge on :${BRIDGE_PORT}"
