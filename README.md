@@ -226,6 +226,11 @@ curl -X POST http://your-robot.local:8888/voice/input \
 curl http://your-robot.local:8888/photo -o snap.jpg
 ```
 
+> **Shell quoting matters:** wrap the JSON in **single quotes** and use
+> **double quotes** inside it, exactly as above. With the quotes swapped the
+> shell mangles the JSON before curl ever sends it — the bridge then answers
+> HTTP 400 with what it actually received, so you can see the mangling.
+
 ## 📡 API Reference
 
 ### Bridge Endpoints (Body — Port 8888)

@@ -243,8 +243,11 @@ def cmd_status():
     try:
         with dog_lock:
             info["battery_v"] = round(dog.get_battery_voltage(), 2)
-    except:
+    except Exception as e:
+        # Keep "error" for compatibility, but expose WHY it failed: a working
+        # battery with a failing ADC read looks identical otherwise (issue #12).
         info["battery_v"] = "error"
+        info["battery_error"] = f"{type(e).__name__}: {e}"
     return info
 
 
@@ -822,6 +825,10 @@ def handle_client(conn):
                 request = {"cmd": cmd_name}
 
         cmd_name = request.get("cmd", request.get("command", ""))
+        # Log external commands so `journalctl -u nox-body` shows what arrived.
+        # "status" is polled continuously by the bridge and would drown the log.
+        if cmd_name != "status" and not request.get("_internal"):
+            print(f"[nox] cmd: {json.dumps(request)[:200]}", flush=True)
         if cmd_name in COMMANDS:
             result = COMMANDS[cmd_name](request)
             response = json.dumps(result)
