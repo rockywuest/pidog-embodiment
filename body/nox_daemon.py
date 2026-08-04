@@ -98,6 +98,11 @@ _pidog_mod.Pidog.__init__ = _patched_init
 
 from pidog import Pidog
 
+try:
+    from pidog import preset_actions as _preset_actions
+except Exception:
+    _preset_actions = None
+
 # ─── Global state ───
 dog = None
 camera_lock = threading.Lock()
@@ -234,6 +239,26 @@ def init_dog():
     print("[nox] PiDog ready. Nox lebt! ⚡", flush=True)
 
 
+_battery_adc = None
+
+def read_battery_voltage():
+    """Battery voltage with fallback around a broken SDK path.
+
+    robot_hat 2.5.2a1 ships a get_battery_voltage() that raises
+    NameError: '_adc_obj' is not defined (issue #12). The measurement itself
+    works — battery sits on ADC channel A4 behind a 1:3 divider — so on any
+    SDK failure we read the ADC directly. Caller must hold dog_lock.
+    """
+    global _battery_adc
+    try:
+        return round(dog.get_battery_voltage(), 2)
+    except Exception:
+        from robot_hat import ADC
+        if _battery_adc is None:
+            _battery_adc = ADC("A4")
+        return round(_battery_adc.read_voltage() * 3, 2)
+
+
 def cmd_status():
     """System status."""
     import shutil
@@ -242,7 +267,7 @@ def cmd_status():
     info["disk_free_gb"] = round(free / (1024**3), 1)
     try:
         with dog_lock:
-            info["battery_v"] = round(dog.get_battery_voltage(), 2)
+            info["battery_v"] = read_battery_voltage()
     except Exception as e:
         # Keep "error" for compatibility, but expose WHY it failed: a working
         # battery with a failing ADC read looks identical otherwise (issue #12).
@@ -258,9 +283,40 @@ def cmd_move(action, steps=3, speed=80, internal=False):
         # Re-init servos before moving
         pass  # PiDog re-enables on do_action
     with dog_lock:
-        dog.do_action(action, step_count=int(steps), speed=int(speed))
-        time.sleep(1.5)
-    return {"ok": True, "action": action}
+        # SDK do_action() swallows unknown actions (prints and returns), so we
+        # must route ourselves. Probe the CLASS for a property: instance
+        # hasattr would execute the ActionDict property just to probe it.
+        if isinstance(getattr(type(dog.actions_dict), action, None), property):
+            dog.do_action(action, step_count=int(steps), speed=int(speed))
+            time.sleep(1.5)
+            return {"ok": True, "action": action}
+        # pant/bark/howling & friends live in pidog.preset_actions, not in
+        # ActionDict (issue #12: 'ActionDict' object has no attribute 'pant').
+        preset = getattr(_preset_actions, action, None) if _preset_actions else None
+        if callable(preset):
+            try:
+                preset(dog)
+                return {"ok": True, "action": action, "via": "preset"}
+            except Exception as e:
+                return {"ok": False, "action": action,
+                        "error": f"preset action failed: {type(e).__name__}: {e}"}
+        return {"ok": False, "action": action,
+                "error": f"action '{action}' not supported by this pidog SDK",
+                "supported": _supported_actions()}
+
+
+def _supported_actions():
+    """Everything cmd_move can execute: ActionDict properties + preset functions."""
+    dict_actions = [n for n, v in vars(type(dog.actions_dict)).items()
+                    if isinstance(v, property)]
+    preset_fns = []
+    if _preset_actions:
+        preset_fns = [n for n in dir(_preset_actions)
+                      if not n.startswith("_")
+                      and callable(getattr(_preset_actions, n))
+                      and getattr(getattr(_preset_actions, n), "__module__", "")
+                      == _preset_actions.__name__]
+    return sorted(set(dict_actions + preset_fns))
 
 
 def cmd_head(yaw=0, roll=0, pitch=0, smooth=True, internal=False):
@@ -526,7 +582,7 @@ def cmd_sensors():
     # Battery
     try:
         with dog_lock:
-            v = dog.get_battery_voltage()
+            v = read_battery_voltage()
             result["battery_v"] = round(v, 2)
             result["battery_pct"] = max(0, min(100, round((v - 6.0) / (8.4 - 6.0) * 100)))
             result["charging"] = v > 8.35
@@ -608,7 +664,7 @@ def cmd_body_state():
             result["posture"] = "unknown"
         
         try:
-            v = dog.get_battery_voltage()
+            v = read_battery_voltage()
             result["battery_v"] = round(v, 2)
             result["battery_pct"] = max(0, min(100, round((v - 6.0) / (8.4 - 6.0) * 100)))
             result["charging"] = v > 8.35
