@@ -95,13 +95,38 @@ if [[ $IS_BODY -eq 1 ]]; then
   section "Body — services"
   check_service nox-body
   check_service nox-bridge
-  check_service nox-voice
+  # nox-voice exits cleanly when no Vosk model is installed — in that case
+  # "not running" is the documented behavior, not a failure.
+  vosk_model_dir="${VOSK_MODEL_PATH:-$HOME/vosk-models/vosk-model-small-de-0.15}"
+  if [[ ! -f /etc/systemd/system/nox-voice.service ]]; then
+    warn "nox-voice is not installed"
+    hint "run: sudo ./scripts/install-body.sh (body) or install-brain.sh (brain)"
+  elif svc_active nox-voice; then
+    pass "nox-voice is running"
+  elif [[ ! -d "$vosk_model_dir" ]]; then
+    warn "nox-voice not running — expected without a Vosk model (voice input stays off)"
+  else
+    fail "nox-voice is installed but not running"
+    hint "sudo systemctl restart nox-voice && journalctl -u nox-voice -n 30 --no-pager"
+  fi
 
   section "Body — bridge API"
   if have curl; then
-    status_json="$(curl -s --max-time 5 "http://127.0.0.1:${BRIDGE_PORT}/status" 2>/dev/null)"
+    # The bridge needs a few seconds after a restart (camera init etc.) —
+    # retry before declaring it down, or doctor right after systemctl restart
+    # reports a false FAIL (seen in issue #12).
+    status_json=""; bridge_tries=1
+    for bridge_tries in 1 2 3 4 5; do
+      status_json="$(curl -s --max-time 5 "http://127.0.0.1:${BRIDGE_PORT}/status" 2>/dev/null)"
+      [[ -n "$status_json" ]] && break
+      sleep 2
+    done
     if [[ -n "$status_json" ]]; then
-      pass "bridge answers on :${BRIDGE_PORT}/status"
+      if [[ $bridge_tries -gt 1 ]]; then
+        pass "bridge answers on :${BRIDGE_PORT}/status (took ${bridge_tries} tries — it was still starting up)"
+      else
+        pass "bridge answers on :${BRIDGE_PORT}/status"
+      fi
       if printf '%s' "$status_json" | grep -q '"battery_v": *"error"'; then
         berr="$(printf '%s' "$status_json" | sed -n 's/.*"battery_error": *"\([^"]*\)".*/\1/p')"
         warn "battery_v is \"error\" — the daemon can't READ the battery voltage${berr:+ (${berr})}"
