@@ -477,6 +477,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             r = send_to_daemon({"cmd": "scan_sweep"})
             self._send_json(r)
 
+        elif path == "/selftest":
+            # Servo self-test (issue #12): direct synchronous servo write that
+            # bypasses the SDK action threads, plus thread/buffer health.
+            # CAUTION: physically moves the dog (sit -> stand).
+            self._send_json(send_to_daemon({"cmd": "servo_test"}, timeout=15))
+
         elif path == "/sensors":
             # Aggregated sensor data (Sprint 4)
             raw = send_to_daemon({"cmd": "sensors"})
@@ -556,7 +562,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "GET": ["/status", "/perception", "/photo", "/look", "/faces",
                             "/voice/inbox", "/voice/echo_until", "/memory/recent",
                             "/memory/stats", "/state", "/scan", "/scan/sweep",
-                            "/sensors", "/capabilities", "/vision"],
+                            "/sensors", "/capabilities", "/vision", "/selftest"],
                     "POST": ["/action", "/speak", "/command", "/rgb", "/head",
                              "/face/register", "/voice/respond", "/voice/input",
                              "/combo", "/behavior/start", "/behavior/stop",
