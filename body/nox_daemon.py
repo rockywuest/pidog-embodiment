@@ -236,6 +236,12 @@ def init_dog():
         _hw_status.append("ears:ok")
     print(f"[nox] Hardware: {', '.join(_hw_status)}", flush=True)
     print(f"[nox] Audio device: {_PLAYBACK_DEVICE}", flush=True)
+    dead = _dead_action_threads()
+    if dead:
+        print(f"[nox] WARNING: action thread(s) already dead after init: "
+              f"{', '.join(dead)} — the dog will NOT move!", flush=True)
+    else:
+        print("[nox] Action threads healthy (legs/head/tail consumers running)", flush=True)
     print("[nox] PiDog ready. Nox lebt! ⚡", flush=True)
 
 
@@ -289,7 +295,22 @@ def cmd_move(action, steps=3, speed=80, internal=False):
         if isinstance(getattr(type(dog.actions_dict), action, None), property):
             dog.do_action(action, step_count=int(steps), speed=int(speed))
             time.sleep(1.5)
-            return {"ok": True, "action": action}
+            # The SDK's consumer threads die permanently on their first
+            # exception (`except Exception: break`) — after that every action
+            # queues forever while do_action still "succeeds" (issue #12:
+            # ok:true but the dog never moves). Detect that here.
+            dead = _dead_action_threads()
+            if dead:
+                return {"ok": False, "action": action,
+                        "error": f"action thread(s) dead: {', '.join(dead)} — "
+                                 "commands queue but are never executed",
+                        "hint": "sudo systemctl restart nox-body; then check: "
+                                "journalctl -u nox-body | grep -i exception"}
+            queued = _action_buffer_depth()
+            result = {"ok": True, "action": action}
+            if queued > 0:
+                result["note"] = f"{queued} motion frames still queued (long action or slow servos)"
+            return result
         # pant/bark/howling & friends live in pidog.preset_actions, not in
         # ActionDict (issue #12: 'ActionDict' object has no attribute 'pant').
         preset = getattr(_preset_actions, action, None) if _preset_actions else None
@@ -303,6 +324,50 @@ def cmd_move(action, steps=3, speed=80, internal=False):
         return {"ok": False, "action": action,
                 "error": f"action '{action}' not supported by this pidog SDK",
                 "supported": _supported_actions()}
+
+
+def _dead_action_threads():
+    """Names of SDK action-consumer threads that have died. Empty = healthy."""
+    dead = []
+    for name in ("legs_thread", "head_thread", "tail_thread"):
+        t = getattr(dog, name, None)
+        if t is not None and not t.is_alive():
+            dead.append(name)
+    return dead
+
+
+def _action_buffer_depth():
+    """Total motion frames waiting in the SDK's action buffers."""
+    total = 0
+    for name in ("legs_action_buffer", "head_action_buffer", "tail_action_buffer"):
+        buf = getattr(dog, name, None)
+        if buf is not None:
+            total += len(buf)
+    return total
+
+
+def cmd_servo_test():
+    """Split issue #12 in half: write servo angles DIRECTLY and synchronously,
+    bypassing the SDK's buffer/thread machinery. If the dog moves here but not
+    via /action, the consumer threads are the problem; if it doesn't move
+    here either, the failure is below the SDK (robot_hat / MCU / power).
+    """
+    report = {"threads_dead": _dead_action_threads(),
+              "buffered_frames": _action_buffer_depth()}
+    with dog_lock:
+        try:
+            frames, part = dog.actions_dict["sit"]
+            report["direct_write"] = "sit pose, final frame, via legs.servo_move"
+            dog.legs.servo_move(list(frames[-1]), 60)
+            time.sleep(1.0)
+            frames, part = dog.actions_dict["stand"]
+            dog.legs.servo_move(list(frames[-1]), 60)
+            report["ok"] = True
+            report["question"] = "did the dog visibly sit and stand back up?"
+        except Exception as e:
+            report["ok"] = False
+            report["direct_write_error"] = f"{type(e).__name__}: {e}"
+    return report
 
 
 def _supported_actions():
@@ -815,6 +880,7 @@ def cmd_three_way_scan():
 # ─── Command dispatcher ───
 COMMANDS = {
     "status": lambda args: cmd_status(),
+    "servo_test": lambda args: cmd_servo_test(),
     "move": lambda args: cmd_move(args.get("action", "stand"), args.get("steps", 3), args.get("speed", 80), internal=args.get("_internal", False)),
     "head": lambda args: cmd_head(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0), args.get("smooth", True), internal=args.get("_internal", False)),
     "head_ema": lambda args: cmd_head_ema(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0), internal=args.get("_internal", False)),
