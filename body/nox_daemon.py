@@ -351,22 +351,56 @@ def cmd_servo_test():
     bypassing the SDK's buffer/thread machinery. If the dog moves here but not
     via /action, the consumer threads are the problem; if it doesn't move
     here either, the failure is below the SDK (robot_hat / MCU / power).
+
+    Phase 2 goes one level deeper: a single-servo wiggle through a fresh
+    robot_hat Servo object — the shortest possible path to the MCU, bypassing
+    even the SDK's Robot class. Also reports who this process runs as:
+    SunFounder examples run under sudo, the systemd units do not, and that
+    privilege gap is a prime suspect when writes succeed but nothing moves.
     """
-    report = {"threads_dead": _dead_action_threads(),
+    import pwd
+    import grp
+    try:
+        euid = os.geteuid()
+        report_id = {
+            "user": pwd.getpwuid(euid).pw_name,
+            "euid": euid,
+            "groups": sorted(grp.getgrgid(g).gr_name for g in os.getgroups()),
+        }
+    except Exception as e:
+        report_id = {"error": str(e)}
+    report = {"process": report_id,
+              "threads_dead": _dead_action_threads(),
               "buffered_frames": _action_buffer_depth()}
     with dog_lock:
         try:
             frames, part = dog.actions_dict["sit"]
-            report["direct_write"] = "sit pose, final frame, via legs.servo_move"
+            report["phase1"] = "sit+stand poses via legs.servo_move (SDK Robot class)"
             dog.legs.servo_move(list(frames[-1]), 60)
             time.sleep(1.0)
             frames, part = dog.actions_dict["stand"]
             dog.legs.servo_move(list(frames[-1]), 60)
-            report["ok"] = True
-            report["question"] = "did the dog visibly sit and stand back up?"
+            time.sleep(1.0)
+            report["phase1_ok"] = True
         except Exception as e:
-            report["ok"] = False
-            report["direct_write_error"] = f"{type(e).__name__}: {e}"
+            report["phase1_ok"] = False
+            report["phase1_error"] = f"{type(e).__name__}: {e}"
+        try:
+            from robot_hat import Servo
+            legs_pins = getattr(type(dog), "DEFAULT_LEGS_PINS", None) or [2]
+            pin = legs_pins[0]
+            report["phase2"] = f"single-servo wiggle on P{pin} via raw robot_hat Servo"
+            s = Servo(f"P{pin}")
+            for angle in (-20, 20, 0):
+                s.angle(angle)
+                time.sleep(0.4)
+            report["phase2_ok"] = True
+        except Exception as e:
+            report["phase2_ok"] = False
+            report["phase2_error"] = f"{type(e).__name__}: {e}"
+    report["ok"] = bool(report.get("phase1_ok") or report.get("phase2_ok"))
+    report["question"] = ("phase1: did the dog sit+stand? "
+                          "phase2: did ONE front leg wiggle left-right?")
     return report
 
 
