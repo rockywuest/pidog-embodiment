@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Face registration and identification example."""
+"""Face registration and identification example.
 
+Runs on the BODY (the engine lives in body/, next to the camera).
+Download the ONNX models first: cd models && ./download_models.sh
+"""
+
+import os
 import sys
-sys.path.insert(0, '..')
-from brain.nox_face_recognition import FaceEngine
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "body"))
+from nox_face_recognition import FaceEngine
 
-# Initialize (download models first: cd models && ./download_models.sh)
-engine = FaceEngine("../models", "../face_db")
+repo_root = os.path.join(os.path.dirname(__file__), "..")
+engine = FaceEngine(os.path.join(repo_root, "models"),
+                    os.path.join(repo_root, "face_db"))
 
 # Register a face from an image
 result = engine.register("Rocky", "rocky_photo.jpg")

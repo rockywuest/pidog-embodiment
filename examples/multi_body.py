@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Multi-body control example — same brain, different bodies."""
+"""Multi-body control example — same brain, different bodies.
 
+Run from the repo root (or the examples/ directory) on the brain machine:
+    python3 examples/multi_body.py
+"""
+
+import os
 import sys
-sys.path.insert(0, '..')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from brain.nox_body_client import BodyClient
 
 # Define available bodies

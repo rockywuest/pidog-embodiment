@@ -200,6 +200,27 @@ battery, and the voice/vision models, with a fix hint for anything that's off:
 ./scripts/doctor.sh
 ```
 
+If commands report `ok` but the dog doesn't physically move, run the servo
+self-test (⚠️ it moves the dog — sit, stand, one-leg wiggle):
+
+```bash
+curl -s http://127.0.0.1:8888/selftest
+```
+
+It drives the servos directly, bypassing the SDK's queue/thread machinery, and
+reports which user the daemon runs as, thread health, and queue depth — the
+output localizes the failing layer.
+
+### Known Upstream Quirks (worked around)
+
+- **robot_hat 2.5.2a1**: its `get_battery_voltage()` crashes with
+  `NameError: name '_adc_obj' is not defined`. The daemon detects this and
+  reads the battery ADC (channel A4) directly — `/status` stays correct.
+- **SunFounder SDK `do_action()`** silently ignores unknown actions and its
+  action threads die permanently on their first exception. The daemon
+  detects dead threads and reports them loudly instead of returning fake
+  success.
+
 ### Test It
 
 ```bash
@@ -238,10 +259,15 @@ curl http://your-robot.local:8888/photo -o snap.jpg
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/status` | Full system status (battery, sensors, perception) |
+| GET | `/sensors` | Structured sensor data (battery %, distance, touch, posture) |
+| GET | `/capabilities` | Endpoint discovery: all endpoints, actions, expressions, sounds |
+| GET | `/selftest` | Servo self-test — **physically moves the dog**, reports thread/process health |
 | GET | `/photo` | Capture and return camera image |
 | GET | `/look` | Photo + face detection + scene analysis |
+| GET | `/vision` | Latest local vision result (SmolVLM, if installed) |
 | POST | `/speak` | Text-to-Speech (async) |
 | POST | `/action` | Execute movement: `{"action": "sit"}` |
+| POST | `/expression` | Coordinated emotion: action + RGB + head + sound |
 | POST | `/combo` | Combined action: actions + speak + RGB + head |
 | POST | `/rgb` | Set LED color: `{"r":0, "g":255, "b":0, "mode":"breath"}` |
 | POST | `/head` | Move head: `{"yaw":30, "roll":0, "pitch":10}` |
@@ -254,10 +280,17 @@ curl http://your-robot.local:8888/photo -o snap.jpg
 ### Available Actions
 
 ```
-Movement: forward, backward, turn_left, turn_right, stand, sit, lie
-Tricks:   wag_tail, bark, trot, stretch, push_up, howling, doze_off
-Body:     nod_lethargy, shake_head, pant
+Movement: forward, backward, turn_left, turn_right, stand, sit, lie, trot
+Tricks:   wag_tail, bark, howling, pant, stretch, push_up, doze_off,
+          hand_shake, high_five, scratch, body_twisting, lick_hand, feet_shake
+Head:     nod, shake_head, tilting_head, think, recall
+Posture:  attack_posture, sit_2_stand, waiting, alert, surprise
 ```
+
+The exact set depends on your installed SunFounder SDK version: some are
+`ActionDict` poses, others are preset functions — the daemon routes both
+transparently. An unknown action returns an error **listing everything your
+SDK build actually supports** (also available via `GET /capabilities`).
 
 ### Emotion → RGB Mapping
 
