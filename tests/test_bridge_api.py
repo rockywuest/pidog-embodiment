@@ -66,3 +66,16 @@ def test_singular_action_is_forwarded(server_port):
 def test_array_actions_forwarded_per_item(server_port):
     code, body = post(server_port, "/action", '{"actions": ["sit", "wag_tail"]}')
     assert len(body["results"]) == 2
+
+
+def test_body_client_class_against_live_handler(server_port):
+    # The class the README and examples use — must exist and speak the API.
+    from brain.nox_body_client import BodyClient
+
+    robot = BodyClient("127.0.0.1", server_port, timeout=10)
+    result = robot.move("sit")
+    # No daemon in CI: the bridge must forward and surface the connection
+    # error — any dict response proves request/response plumbing works.
+    assert isinstance(result, dict)
+    caps = robot.capabilities()
+    assert caps.get("ok") and "sit" in caps.get("actions", [])

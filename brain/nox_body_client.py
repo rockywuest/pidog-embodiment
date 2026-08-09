@@ -300,6 +300,125 @@ def vision_describe():
     return f"[{age}s ago] {desc}"
 
 
+# ─── Multi-body class API ───
+class BodyClient:
+    """Per-body client — the class the README and examples use.
+
+    The module-level functions above talk to ONE body picked via the
+    PIDOG_HOST env var. This class carries its own host, so several bodies
+    can be driven side by side:
+
+        dog = BodyClient("pidog.local", 8888)
+        dog.move("sit")
+        dog.speak("Hallo!")
+    """
+
+    def __init__(self, host=None, port=None, timeout=TIMEOUT):
+        self.host = host or PIDOG_HOST
+        self.port = int(port or BRIDGE_PORT)
+        self.base_url = f"http://{self.host}:{self.port}"
+        self.timeout = timeout
+
+    def _request(self, method, path, data=None, timeout=None):
+        url = f"{self.base_url}{path}"
+        if data is not None:
+            req = urllib.request.Request(url, data=json.dumps(data).encode(), method=method)
+            req.add_header("Content-Type", "application/json")
+        else:
+            req = urllib.request.Request(url, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            try:
+                return json.loads(body)
+            except Exception:
+                return {"error": f"HTTP {e.code}: {body}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _get(self, path, timeout=None):
+        return self._request("GET", path, timeout=timeout)
+
+    def _post(self, path, data=None, timeout=None):
+        return self._request("POST", path, data=data, timeout=timeout)
+
+    # Core
+    def status(self):
+        return self._get("/status")
+
+    def sensors(self):
+        return self._get("/sensors")
+
+    def capabilities(self):
+        return self._get("/capabilities")
+
+    def selftest(self):
+        """Direct servo self-test — physically moves the robot!"""
+        return self._get("/selftest", timeout=30)
+
+    def battery(self):
+        return self.status().get("sensors", {}).get("battery_v", "unknown")
+
+    # Motion & expression
+    def move(self, action, steps=3, speed=80):
+        return self._post("/command", {"cmd": "move", "action": action,
+                                       "steps": steps, "speed": speed})
+
+    def head(self, yaw=0, roll=0, pitch=0):
+        return self._post("/head", {"yaw": yaw, "roll": roll, "pitch": pitch})
+
+    def rgb(self, r=128, g=0, b=255, mode="breath", bps=0.8):
+        return self._post("/rgb", {"r": r, "g": g, "b": b, "mode": mode, "bps": bps})
+
+    def speak(self, text):
+        return self._post("/speak", {"text": text})
+
+    def express(self, emotion, text=""):
+        data = {"type": emotion}
+        if text:
+            data["speak"] = text
+        return self._post("/expression", data)
+
+    def combo(self, actions=None, speak=None, rgb=None, head=None):
+        data = {}
+        if actions:
+            data["actions"] = actions
+        if speak:
+            data["speak"] = speak
+        if rgb:
+            data["rgb"] = rgb
+        if head:
+            data["head"] = head
+        return self._post("/combo", data)
+
+    # Camera & faces
+    def photo(self, save_path=None):
+        result = self._get("/photo", timeout=30)
+        if save_path and result.get("photo_b64"):
+            with open(save_path, "wb") as f:
+                f.write(base64.b64decode(result["photo_b64"]))
+            result["saved_to"] = save_path
+        return result
+
+    def look(self):
+        return self._get("/look", timeout=30)
+
+    def register_face(self, name):
+        return self._post("/face/register", {"name": name})
+
+    def list_faces(self):
+        return self._get("/faces")
+
+    # Voice
+    def voice_inbox(self):
+        return self._get("/voice/inbox")
+
+    def voice_respond(self, text):
+        return self._post("/voice/respond", {"text": text})
+
+
 # ─── CLI Interface ───
 def main():
     """CLI interface for quick body control."""

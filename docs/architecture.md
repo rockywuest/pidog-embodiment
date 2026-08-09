@@ -1,148 +1,89 @@
-# Nox Embodiment — PiDog Integration Masterplan
+# Architecture
 
-*Gestartet: 2026-01-31 00:40*
-*Ziel: PiDog wird Nox' physischer Körper — sehen, verstehen, bewegen, interagieren.*
+*The current system design. For the visual diagram see the README; for the
+original research notes see [research.md](research.md).*
 
-## Hardware-Inventar
+## The core idea: Brain / Body split over HTTP
 
-| Komponente | Details | Status |
-|-----------|---------|--------|
-| **SBC** | Raspberry Pi 4, 1.8GB RAM, 4-core ARM Cortex-A53 | ✅ |
-| **Servos** | 12x (4 Beine × 2, Kopf YRP, Schwanz) | ✅ |
-| **Kamera** | Pi Camera (640×480) via vilib/picamera2 | ✅ |
-| **Audio Out** | HifiBerry DAC (card 3) | ✅ |
-| **Audio In** | USB PnP Sound Device (card 4) | ✅ |
-| **Touch** | Dual Touch Sensor (Kopf) | ✅ |
-| **Sound** | Sound Direction Sensor | ✅ |
-| **IMU** | SH3001 (Pitch/Roll) | ✅ |
-| **Ultraschall** | SunFounder (Init hängt) | ⚠️ Gepatcht (skip) |
-| **RGB LEDs** | RGB Strip (breath/listen/speak/boom Modes) | ✅ |
-| **Batterie** | 8.22V (2S LiPo) | ✅ |
-
-## Software-Inventar
-
-| Tool | Details | Status |
-|------|---------|--------|
-| **nox_daemon.py** | Body Controller (TCP:9999) | ✅ Running |
-| **nox_voice_loop.py** | Vosk STT + Piper TTS | ✅ Running |
-| **OpenCV** | 4.11.0 (contrib) | ✅ |
-| **MediaPipe** | 0.10.18 (Hands, Pose, Face Mesh) | ✅ |
-| **TFLite** | 2.14.0 (Object Detection) | ✅ |
-| **ONNXRuntime** | 1.23.2 | ✅ |
-| **vilib** | 0.3.16 (Face/Object/Hands/Pose/QR/Traffic) | ✅ |
-| **Vosk** | German small model | ✅ |
-| **Piper** | Thorsten DE high quality | ✅ |
-| **COCO SSD** | 80-Klassen Object Detection | ✅ |
-| **Haar Cascade** | Face Detection | ✅ |
-
-## Architektur: Nox Embodiment System
+The intelligence does not live on the robot. A **brain** process (any machine —
+Pi 5, desktop, laptop) talks to a **body** (the robot's Pi) over plain HTTP.
+The body exposes sensors and actuators as an API; the brain decides what to do.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  NOX'S BRAIN (Pi 5 — Clawdbot)                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────┐  │
-│  │ Conversation │  │ Claude Vision│  │  Decision  │  │
-│  │   Context    │  │   Analysis   │  │   Engine   │  │
-│  └─────────────┘  └──────────────┘  └───────────┘  │
-│         ▲                ▲                │         │
-│         │                │                ▼         │
-│  ┌──────┴────────────────┴──────────────────────┐   │
-│  │           BRIDGE (HTTP/TCP)                   │   │
-│  └──────────────────────────────────────────────┘   │
-└────────────────────────┬────────────────────────────┘
-                         │ LAN (192.168.68.x)
-┌────────────────────────┴────────────────────────────┐
-│  NOX'S BODY (Pi 4 — PiDog)                         │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────┐  │
-│  │   Sensory    │  │  Perception  │  │  Motor     │  │
-│  │   Input      │  │  Pipeline    │  │  Control   │  │
-│  │  - Camera    │  │  - Face Det  │  │  - Walk    │  │
-│  │  - Mic       │  │  - Obj Det   │  │  - Turn    │  │
-│  │  - Touch     │  │  - Scene     │  │  - Head    │  │
-│  │  - IMU       │  │  - STT       │  │  - RGB     │  │
-│  │  - Sound Dir │  │              │  │  - TTS     │  │
-│  └─────────────┘  └──────────────┘  └───────────┘  │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────┐         ┌──────────────────────────────────┐
+│  BRAIN (any machine)         │  HTTP   │  BODY (robot's Raspberry Pi)     │
+│                              │ :8888   │                                  │
+│  nox-brain ──────────────────┼────────►│  nox-bridge (HTTP API)           │
+│  · LLM loop (OpenAI/Ollama)  │         │      │ TCP :9999 / unix socket   │
+│  · decides actions/speech    │         │      ▼                           │
+│  · telegram_bot (optional)   │         │  nox-body (nox_daemon.py)        │
+│                              │         │  · SunFounder SDK (servos, IMU)  │
+│  nox_body_client.py          │         │  · camera, RGB, TTS playback     │
+│  · Python API + CLI          │         │  nox-voice (optional, Vosk STT)  │
+│                              │         │  nox-vision (optional, SmolVLM)  │
+└──────────────────────────────┘         └──────────────────────────────────┘
 ```
 
-## Phasen
+Both halves can also run on one machine (`BRAIN_HOST=127.0.0.1`).
 
-### Phase 1: Foundation 🔧 (Jetzt → So 02.02.)
-- [x] Hardware & Software Inventar
-- [ ] **nox_brain_bridge.py** — HTTP-Server auf PiDog für Brain→Body Kommunikation
-- [ ] **Continuous Vision Pipeline** — Kamera immer an, periodische Frame-Analyse
-- [ ] **Face Recognition** — Personen identifizieren (nicht nur detektieren)
-- [ ] **Voice ↔ Brain Integration** — Spracheingabe → Clawdbot → Antwort → TTS
-- [ ] **Perception State** — Was sehe ich gerade? (Personen, Objekte, Szene)
+## Components
 
-### Phase 2: Intelligence 🧠 (Mo 03.02. → Fr 07.02.)
-- [ ] **Scene Understanding** — Claude Vision für tiefes Szenenverständnis
-- [ ] **Room Recognition** — Räume anhand visueller Merkmale erkennen
-- [ ] **Object Memory** — Was wo gesehen wurde
-- [ ] **Person Memory** — Gesichter lernen, Personen wiedererkennen
-- [ ] **Natural Dialogue** — Kontextbewusster, fließender Gesprächsfluss
-- [ ] **Emotional State Machine** — Stimmung basierend auf Interaktionen
+| Component | File | Runs on | Role |
+|-----------|------|---------|------|
+| Daemon | `body/nox_daemon.py` | body | Owns the SunFounder SDK: servos, sensors, TTS, camera. Command server on TCP :9999 + unix socket. |
+| Bridge | `body/nox_brain_bridge.py` | body | HTTP API on :8888. Translates REST calls into daemon commands, holds perception state. |
+| Behavior engine | `body/nox_behavior_engine.py` | body | Local autonomy: mood FSM, idle behaviors, patrol — keeps the dog alive when the brain is away. |
+| Voice loop | `body/nox_voice_loop_v2.py` | body | Optional: Vosk STT → forwards recognized text to the brain. Exits cleanly if no model. |
+| Vision | `body/nox_vision.py` | body | Optional: local SmolVLM via llama.cpp for scene description. |
+| Brain | `brain/nox_voice_brain.py` | brain | LLM loop: perception in → JSON with actions/speech out. OpenAI-compatible endpoint (incl. Ollama). |
+| Body client | `brain/nox_body_client.py` | brain | Python API (`BodyClient` class + module functions) and CLI for the bridge. |
+| Telegram bot | `brain/telegram_bot.py` | brain | Optional remote control channel. |
 
-### Phase 3: Autonomy 🤖 (Woche 2)
-- [ ] **Spatial Navigation** — Raumkarte, Pfadplanung
-- [ ] **Proactive Behavior** — Patrouille, Exploration, Reaktion auf Events
-- [ ] **Multi-Modal Integration** — Sehen + Hören + Fühlen = Verstehen
-- [ ] **Learning & Adaptation** — Verhalten anpassen basierend auf Feedback
+One systemd unit per component; `scripts/install-body.sh` /
+`install-brain.sh` generate them for the local user and paths.
 
-## Designprinzipien
+## Design principles
 
-1. **PiDog = Körper, Nox = Geist** — Die Intelligenz lebt auf dem Pi 5 (Clawdbot). PiDog macht nur Sensorik + Motorik + lokale Schnellreaktionen.
-2. **Local-Fast, Cloud-Deep** — Einfache Reaktionen (Touch → Wedeln) lokal auf Pi 4. Komplexe Verarbeitung (Szenenverständnis, Konversation) via Nox's Brain.
-3. **Graceful Degradation** — Wenn Nox's Brain nicht erreichbar → PiDog agiert autonom mit lokalem Modell.
-4. **Security First** — Keine offenen Ports nach außen. Nur internes LAN.
-5. **Memory Persistence** — Alles was gelernt wird, wird gespeichert (Gesichter, Räume, Objekte).
+1. **Body = reflexes, brain = thought.** The robot handles fast local behavior
+   (touch → wag, idle poses); reasoning and conversation live in the brain.
+2. **Graceful degradation.** No brain reachable → the behavior engine keeps
+   the dog autonomous. No voice model → voice stays off, everything else runs.
+   No vision build → same. Optional means optional.
+3. **Fail loudly.** Broken JSON, unknown actions, dead SDK threads, failing
+   battery reads — every failure returns a diagnosable error instead of a
+   silent `ok` (learned the hard way in issues #5–#12).
+4. **HTTP is the contract.** Any hardware that implements `/action`, `/speak`
+   and `/status` is a valid body (see `body/adapters/`); any client that
+   speaks the API is a valid brain.
+5. **LAN only.** No ports exposed to the internet; remote access via
+   Tailscale (see [remote-access.md](remote-access.md)).
 
-## Dateien auf PiDog
+## Message flow
 
-```
-/home/pidog/
-├── nox_daemon.py          # Body controller (existing, improve)
-├── nox_voice_loop.py      # Voice listener (existing, improve)  
-├── nox_brain_bridge.py    # NEW: HTTP bridge to Nox's brain
-├── nox_perception.py      # NEW: Continuous vision pipeline
-├── nox_face_db/           # NEW: Face encodings database
-│   └── faces.json         # Name → encoding mappings
-├── nox_memory/            # NEW: Spatial & object memory
-│   ├── rooms.json         # Room visual signatures
-│   └── objects.json       # Object sighting history
-└── nox_config.json        # NEW: Unified configuration
-```
+**Brain → body** (REST, see README API reference):
 
-## Kommunikationsprotokoll (Brain ↔ Body)
-
-### Body → Brain (Perception Reports)
 ```json
-{
-  "type": "perception",
-  "ts": 1706654400.0,
-  "faces": [{"name": "Rocky", "x": 320, "y": 240, "confidence": 0.92}],
-  "objects": [{"class": "cup", "x": 100, "y": 300, "score": 0.87}],
-  "scene_description": "Wohnzimmer, eine Person sitzt am Tisch",
-  "audio": {"speech": "Hallo Nox", "direction": 45},
-  "sensors": {"touch": false, "battery_v": 8.22, "pitch": 0, "roll": 0}
-}
+POST /combo  {"actions": ["stand", "wag_tail"], "speak": "Hallo!",
+              "rgb": {"r": 0, "g": 255, "b": 0, "mode": "breath"}}
 ```
 
-### Brain → Body (Action Commands)
+**Body → brain** (perception push + voice input):
+
 ```json
-{
-  "type": "action",
-  "actions": ["wag tail", "nod"],
-  "speak": "Hallo Rocky! Schön dich zu sehen!",
-  "rgb": {"r": 0, "g": 255, "b": 0, "mode": "breath"},
-  "head": {"yaw": 10, "roll": 0, "pitch": -5}
-}
+{"type": "perception", "faces": [...], "objects": [...],
+ "sensors": {"battery_v": 7.9, "touch": false}, "audio": {"speech": "..."}}
 ```
 
-## Nächste Schritte (JETZT)
-1. ✅ Research & Plan (dieses Dokument)
-2. → `nox_perception.py` schreiben (Continuous Vision + Face DB)
-3. → `nox_brain_bridge.py` schreiben (HTTP API für Brain↔Body)
-4. → Face Recognition Setup (face_recognition lib oder MediaPipe Face Mesh)
-5. → nox_daemon.py erweitern (perception integration)
-6. → Testlauf
+The brain answers voice input with a JSON action plan; if the LLM returns
+malformed JSON, the dog speaks the raw reply and performs no actions —
+graceful fallback, not a crash.
+
+## Diagnostics
+
+- `scripts/doctor.sh` — one-shot health check (role auto-detected), catches
+  the known first-install traps.
+- `GET /selftest` — drives the servos directly past the SDK's queue/thread
+  machinery and reports process identity, thread health, and queue depth;
+  localizes "commands succeed but nothing moves" failures to a layer.
+- The daemon logs every external command — `journalctl -u nox-body` shows
+  what actually arrived.
