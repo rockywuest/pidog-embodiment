@@ -522,6 +522,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         "patrol_enabled": be.get("patrol_enabled", False),
                         "low_battery": be.get("low_battery", False),
                     }
+                    # Surfaced separately from low_battery: a missing pack is not
+                    # a weak one, and it is the reason actions answer ok:true
+                    # without the dog moving (issue #12).
+                    if be.get("servo_power_missing"):
+                        result["behavior"]["servo_power_missing"] = True
+                        result["warning"] = (
+                            "battery rail reads 0.0 V - servos are unpowered; "
+                            "motion commands will succeed but nothing will move")
                     obs = be.get("obstacles", {})
                     scan = obs.get("last_scan", {})
                     if scan.get("forward"):

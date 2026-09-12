@@ -265,6 +265,22 @@ def read_battery_voltage():
         return round(_battery_adc.read_voltage() * 3, 2)
 
 
+def _servo_power_missing():
+    """True when the battery rail reads ~0 V, i.e. no pack is powering the servos.
+
+    The Pi can run from USB-C alone, so the daemon, the bridge and every HTTP
+    endpoint stay perfectly healthy while the servos have no power at all.
+    do_action() then still succeeds -- it only writes PWM values -- and the dog
+    reports ok:true without moving a millimetre (issue #12). Returns False when
+    the ADC cannot be read: unknown is not the same as absent, and a broken ADC
+    must not produce a false "no power" verdict. Caller must hold dog_lock.
+    """
+    try:
+        return read_battery_voltage() <= 1.0
+    except Exception:
+        return False
+
+
 def cmd_status():
     """System status."""
     import shutil
@@ -310,6 +326,13 @@ def cmd_move(action, steps=3, speed=80, internal=False):
             result = {"ok": True, "action": action}
             if queued > 0:
                 result["note"] = f"{queued} motion frames still queued (long action or slow servos)"
+            if _servo_power_missing():
+                result["warning"] = (
+                    "battery rail reads 0.0 V - the servos have no power, so this "
+                    "action ran in software only and the dog did not move")
+                result["hint"] = ("check the battery: pack plugged in and the PiDog "
+                                  "power switch ON. The Pi keeps running from USB-C, "
+                                  "which is why everything else looks healthy")
             return result
         # pant/bark/howling & friends live in pidog.preset_actions, not in
         # ActionDict (issue #12: 'ActionDict' object has no attribute 'pant').
