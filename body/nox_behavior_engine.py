@@ -43,6 +43,39 @@ except ImportError:
 
 
 # ─── FSM States ───────────────────────────────────────────────────────────────
+
+BATTERY_ABSENT_V = 1.0   # at or below this the rail carries no pack
+BATTERY_ASSUMED_V = 8.4  # stand-in charge level when the real one is unknown
+
+
+def classify_battery(raw):
+    """Map a raw battery_v reading to (voltage_for_mood, servo_power_missing).
+
+    Three cases that issue #12 showed must not be conflated:
+
+      absent key / non-numeric  ADC unreadable. Charge level unknown; say
+                                nothing about servo power either way.
+      numeric and <= 1.0 V      No pack on the rail: unplugged, or the PiDog
+                                power switch is off. The Pi keeps running from
+                                USB-C, so the daemon, the bridge and every HTTP
+                                endpoint stay healthy while no servo can move.
+                                do_action() still succeeds -- it only writes PWM
+                                -- so the dog answers ok:true and stands still.
+      numeric and > 1.0 V       A real measurement; drives low-battery mode.
+
+    The first two return the assumed full voltage so the mood engine keeps
+    running on an unknown charge level, but only the second sets the
+    servo_power_missing flag. Reporting a missing pack as a full battery is
+    exactly what hid the real fault.
+    """
+    readable = isinstance(raw, (int, float)) and not isinstance(raw, bool)
+    if not readable:
+        return BATTERY_ASSUMED_V, False
+    if raw <= BATTERY_ABSENT_V:
+        return BATTERY_ASSUMED_V, True
+    return raw, False
+
+
 class BehaviorState(str, Enum):
     IDLE = "idle"
     PATROL = "patrol"
@@ -338,6 +371,10 @@ class BehaviorEngine:
 
         # Battery
         self.low_battery_mode = False
+        # A reading at/below this is not a weak battery — it is no battery:
+        # pack unplugged or power switch off. The Pi can run from USB-C alone,
+        # so everything else keeps working while the servos get no power.
+        self.servo_power_missing = False
 
         # External control
         self._forced_state = None  # Set by API to force a state
@@ -420,6 +457,7 @@ class BehaviorEngine:
             "mood": self.mood.as_dict(),
             "dominant_mood": self.mood.dominant_mood(),
             "low_battery": self.low_battery_mode,
+            "servo_power_missing": self.servo_power_missing,
             "patrol_enabled": self._patrol_enabled,
             "obstacles": {
                 "last_scan": self.obstacles._last_scan,
@@ -482,10 +520,16 @@ class BehaviorEngine:
                     self.mood.on_sound(direction)
                     self._handle_sound(direction)
 
-                # Battery
-                batt_v = result.get("battery_v", 8.4)
-                if isinstance(batt_v, (int, float)) and batt_v < 1.0:
-                    batt_v = 8.4
+                # Battery. Three distinct cases, and conflating them is what
+                # made issue #12 so hard to see:
+                #   - key absent / non-numeric -> ADC unreadable, value unknown
+                #   - numeric but <= 1.0 V     -> no pack on the rail at all
+                #   - numeric and > 1.0 V      -> a real measurement
+                # Only the third drives the low-battery behaviour. The second
+                # must NOT be reported as a full battery: the dog then answers
+                # ok:true to every action while no servo can move.
+                batt_v, self.servo_power_missing = classify_battery(
+                    result.get("battery_v"))
                 self.mood.battery_level = max(0, min(1.0, (batt_v - 6.0) / 2.4))
 
                 if batt_v < 6.8 and not self.low_battery_mode:
