@@ -56,7 +56,10 @@ def classify_battery(raw):
       absent key / non-numeric  ADC unreadable. Charge level unknown; say
                                 nothing about servo power either way.
       numeric and <= 1.0 V      No pack on the rail: unplugged, or the PiDog
-                                power switch is off. The Pi keeps running from
+                                power switch is off. (A dead I2C bus also
+                                yields exactly 0.0 — the daemon catches that
+                                case first and reports battery_v "error" with
+                                an I2C explanation, so it never lands here.) The Pi keeps running from
                                 USB-C, so the daemon, the bridge and every HTTP
                                 endpoint stay healthy while no servo can move.
                                 do_action() still succeeds -- it only writes PWM

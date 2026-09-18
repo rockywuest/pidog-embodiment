@@ -78,6 +78,44 @@ if [[ $IS_BODY -eq 1 ]]; then
     hint "install it from https://github.com/sunfounder/pidog (not on PyPI alone)"
   fi
 
+  # issue #12: robot_hat locates its MCU (0x14/0x15/0x16) by running
+  # `i2cdetect -y 1`. The binary lives in /usr/sbin — on sudo's PATH, not on
+  # the old unit's. Off PATH the scan finds nothing, the SDK falls back to
+  # 0x14, and every servo write / ADC read / IMU init fails WITHOUT an error.
+  i2cdetect_bin=""
+  if have i2cdetect; then
+    i2cdetect_bin="$(command -v i2cdetect)"
+    pass "i2cdetect available (${i2cdetect_bin})"
+  elif [[ -x /usr/sbin/i2cdetect ]]; then
+    i2cdetect_bin=/usr/sbin/i2cdetect
+    warn "i2cdetect is installed but not on this shell's PATH (/usr/sbin)"
+  else
+    fail "i2cdetect not installed — robot_hat cannot find its MCU address"
+    hint "sudo apt install i2c-tools"
+  fi
+  body_unit=/etc/systemd/system/nox-body.service
+  if [[ -f "$body_unit" ]]; then
+    if grep -qE '^Environment=PATH=.*/usr/sbin' "$body_unit"; then
+      pass "nox-body unit PATH includes /usr/sbin"
+    else
+      fail "nox-body unit PATH lacks /usr/sbin — the SDK's MCU scan fails silently inside the service"
+      hint "cd $REPO_DIR && git pull && sudo ./scripts/install-body.sh"
+    fi
+  fi
+  if [[ -n "$i2cdetect_bin" ]]; then
+    bus="$("$i2cdetect_bin" -y 1 2>/dev/null | tail -n +2 | cut -d: -f2- | tr ' ' '\n' | grep -E '^[0-9a-f]{2}$' | tr '\n' ' ')"
+    mcu="$(printf '%s\n' $bus | grep -E '^1[456]$' | head -1)"
+    if [[ -n "$mcu" ]]; then
+      pass "robot_hat MCU answers on I2C bus 1 at 0x${mcu}"
+    elif [[ -z "$bus" ]]; then
+      warn "I2C bus 1 scan returned nothing (no permission, or I2C disabled)"
+      hint "try: sudo $i2cdetect_bin -y 1   — and enable I2C via sudo raspi-config → Interface Options"
+    else
+      fail "no robot_hat MCU on I2C bus 1 (devices found: ${bus})"
+      hint "robot_hat power switch ON? hat seated? (0x14/0x15/0x16 expected)"
+    fi
+  fi
+
   section "Body — configuration"
   if [[ -f "$BODY_DIR/nox.env" ]]; then
     if grep -q '[<>]' "$BODY_DIR/nox.env"; then
@@ -127,7 +165,11 @@ if [[ $IS_BODY -eq 1 ]]; then
       else
         pass "bridge answers on :${BRIDGE_PORT}/status"
       fi
-      if printf '%s' "$status_json" | grep -q '"battery_v": *"error"'; then
+      if printf '%s' "$status_json" | grep -q '"responding": *false'; then
+        ierr="$(printf '%s' "$status_json" | sed -n 's/.*"i2c": *{[^}]*"error": *"\([^"]*\)".*/\1/p' | head -1)"
+        fail "daemon cannot reach the robot_hat MCU on I2C — the dog will not move${ierr:+: ${ierr}}"
+        hint "curl -s http://127.0.0.1:${BRIDGE_PORT}/selftest   → see \"i2c\" for the verdict and fix"
+      elif printf '%s' "$status_json" | grep -q '"battery_v": *"error"'; then
         berr="$(printf '%s' "$status_json" | sed -n 's/.*"battery_error": *"\([^"]*\)".*/\1/p')"
         warn "battery_v is \"error\" — the daemon can't READ the battery voltage${berr:+ (${berr})}"
         hint "if the dog also won't move: check the 2-cell battery — servos run on it, NOT USB-C"

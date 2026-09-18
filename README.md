@@ -208,14 +208,33 @@ curl -s http://127.0.0.1:8888/selftest
 ```
 
 It drives the servos directly, bypassing the SDK's queue/thread machinery, and
-reports which user the daemon runs as, thread health, and queue depth — the
-output localizes the failing layer.
+reports which user and PATH the daemon runs with, thread health, queue depth,
+and — first of all — whether the robot_hat MCU answers on I2C (`"i2c"`:
+resolved address, devices actually on the bus, verdict and fix). The output
+localizes the failing layer.
+
+**Symptom: every command answers `ok`, `/status` shows `battery_v: 0.0`, the
+IMU init prints `fail`, the dog never moves — but SunFounder's examples work
+under `sudo`.** That is the MCU not answering on I2C. robot_hat finds the MCU
+(0x14/0x15/0x16, board-dependent) by running `i2cdetect`, which lives in
+`/usr/sbin`; when that is not on the service's PATH the scan fails and the SDK
+silently falls back to 0x14. Since the fix for issue #12 the units ship with
+`/usr/sbin` on PATH, the daemon probes the MCU at startup and refuses motion
+commands with an explicit error instead of a fake `ok`, and `doctor.sh`
+checks the unit PATH and the bus. On an existing install:
+`git pull && sudo ./scripts/install-body.sh`.
 
 ### Known Upstream Quirks (worked around)
 
 - **robot_hat 2.5.2a1**: its `get_battery_voltage()` crashes with
   `NameError: name '_adc_obj' is not defined`. The daemon detects this and
   reads the battery ADC (channel A4) directly — `/status` stays correct.
+- **robot_hat I2C layer** swallows every bus error (retry, then return
+  `False`) and locates the MCU via `i2cdetect` on PATH, falling back to 0x14
+  when the scan yields nothing. A wrong address therefore looks like a healthy
+  dog with a 0.0 V battery. The daemon probes the MCU itself, turns a dead bus
+  into `battery_v: "error"` plus an I2C explanation, and fails motion commands
+  loudly.
 - **SunFounder SDK `do_action()`** silently ignores unknown actions and its
   action threads die permanently on their first exception. The daemon
   detects dead threads and reports them loudly instead of returning fake
