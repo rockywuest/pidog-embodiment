@@ -103,6 +103,10 @@ try:
 except Exception:
     _preset_actions = None
 
+# I2C reachability diagnostics (issue #12) — stdlib only, ships next to us.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nox_i2c_diag import mcu_diag  # noqa: E402
+
 # ─── Global state ───
 dog = None
 camera_lock = threading.Lock()
@@ -242,6 +246,13 @@ def init_dog():
               f"{', '.join(dead)} — the dog will NOT move!", flush=True)
     else:
         print("[nox] Action threads healthy (legs/head/tail consumers running)", flush=True)
+    with dog_lock:
+        diag = i2c_status(force=True)
+    if diag.get("responding"):
+        print(f"[nox] I2C: robot_hat MCU at {diag['mcu_addr']} responding", flush=True)
+    else:
+        print(f"[nox] WARNING: {diag.get('error')} — the dog will NOT move!", flush=True)
+        print(f"[nox]   fix: {diag.get('hint')}", flush=True)
     print("[nox] PiDog ready. Nox lebt! ⚡", flush=True)
 
 
@@ -257,12 +268,70 @@ def read_battery_voltage():
     """
     global _battery_adc
     try:
-        return round(dog.get_battery_voltage(), 2)
+        v = round(dog.get_battery_voltage(), 2)
     except Exception:
         from robot_hat import ADC
         if _battery_adc is None:
             _battery_adc = ADC("A4")
-        return round(_battery_adc.read_voltage() * 3, 2)
+        v = round(_battery_adc.read_voltage() * 3, 2)
+    if v <= 0.0:
+        # robot_hat swallows I2C errors and returns False per byte, and
+        # (False << 8) + False == 0. An exact zero is far more often "the MCU
+        # never answered" than "the rail is at 0 V" (issue #12: the dog ran on
+        # battery alone and still read 0.0). Ask the bus before believing it.
+        diag = i2c_status()
+        if not diag.get("responding", True):
+            raise RuntimeError(f"I2C: {diag.get('error')} | fix: {diag.get('hint')}")
+    return v
+
+
+_i2c_cache = {"ts": 0.0, "diag": None}
+I2C_DIAG_TTL = 30.0  # seconds; a failed probe spawns i2cdetect, so cache it
+
+
+def _mcu_i2c_object():
+    """The robot_hat I2C object the SDK really drives the servos through, so the
+    probe hits the address the SDK resolved — not one we guess."""
+    global _battery_adc
+    try:
+        return dog.legs.servo_list[0]
+    except Exception:
+        pass
+    try:
+        from robot_hat import ADC
+        if _battery_adc is None:
+            _battery_adc = ADC("A4")
+        return _battery_adc
+    except Exception:
+        return None
+
+
+def _probe_mcu():
+    """(resolved_address, raw) — one byte read through robot_hat's own retry
+    path. An int means the MCU ACKed; False means every attempt failed and the
+    library hid it. Caller must hold dog_lock."""
+    obj = _mcu_i2c_object()
+    if obj is None:
+        return None, None
+    try:
+        from robot_hat import I2C
+        raw = I2C.read(obj, 1)  # bypass ADC.read()'s combining, keep the retry wrapper
+    except Exception:
+        raw = False
+    return getattr(obj, "address", None), raw
+
+
+def i2c_status(force=False):
+    """Cached verdict on whether the robot_hat MCU answers on I2C (issue #12).
+    Caller must hold dog_lock."""
+    now = time.time()
+    cached = _i2c_cache["diag"]
+    if cached is not None and not force and now - _i2c_cache["ts"] < I2C_DIAG_TTL:
+        return cached
+    addr, raw = _probe_mcu()
+    diag = mcu_diag(addr, raw)
+    _i2c_cache["ts"], _i2c_cache["diag"] = now, diag
+    return diag
 
 
 def _servo_power_missing():
@@ -287,6 +356,11 @@ def cmd_status():
     info = {"hostname": os.uname().nodename, "uptime_s": int(float(open("/proc/uptime").read().split()[0]))}
     total, used, free = shutil.disk_usage("/")
     info["disk_free_gb"] = round(free / (1024**3), 1)
+    try:
+        with dog_lock:
+            info["i2c"] = i2c_status()
+    except Exception as e:
+        info["i2c"] = {"error": f"{type(e).__name__}: {e}"}
     try:
         with dog_lock:
             info["battery_v"] = read_battery_voltage()
@@ -326,6 +400,13 @@ def cmd_move(action, steps=3, speed=80, internal=False):
             result = {"ok": True, "action": action}
             if queued > 0:
                 result["note"] = f"{queued} motion frames still queued (long action or slow servos)"
+            i2c = i2c_status()
+            if not i2c.get("responding", True):
+                # robot_hat returned False for every write and raised nothing:
+                # the servo controller never received this command (issue #12).
+                return {"ok": False, "action": action,
+                        "error": f"servo controller unreachable — {i2c.get('error')}",
+                        "hint": i2c.get("hint"), "i2c": i2c}
             if _servo_power_missing():
                 result["warning"] = (
                     "battery rail reads 0.0 V - the servos have no power, so this "
@@ -389,6 +470,7 @@ def cmd_servo_test():
             "user": pwd.getpwuid(euid).pw_name,
             "euid": euid,
             "groups": sorted(grp.getgrgid(g).gr_name for g in os.getgroups()),
+            "path": os.environ.get("PATH", ""),
         }
     except Exception as e:
         report_id = {"error": str(e)}
@@ -396,6 +478,9 @@ def cmd_servo_test():
               "threads_dead": _dead_action_threads(),
               "buffered_frames": _action_buffer_depth()}
     with dog_lock:
+        # Ask the bus first: if the MCU does not answer, both phases below
+        # "succeed" (robot_hat swallows the errors) and nothing moves.
+        report["i2c"] = i2c_status(force=True)
         try:
             frames, part = dog.actions_dict["sit"]
             report["phase1"] = "sit+stand poses via legs.servo_move (SDK Robot class)"
@@ -422,8 +507,14 @@ def cmd_servo_test():
             report["phase2_ok"] = False
             report["phase2_error"] = f"{type(e).__name__}: {e}"
     report["ok"] = bool(report.get("phase1_ok") or report.get("phase2_ok"))
-    report["question"] = ("phase1: did the dog sit+stand? "
-                          "phase2: did ONE front leg wiggle left-right?")
+    if not report["i2c"].get("responding", True):
+        report["ok"] = False
+        report["verdict"] = report["i2c"].get("error")
+        report["hint"] = report["i2c"].get("hint")
+        report["question"] = "nothing will have moved: the MCU never received the writes"
+    else:
+        report["question"] = ("phase1: did the dog sit+stand? "
+                              "phase2: did ONE front leg wiggle left-right?")
     return report
 
 

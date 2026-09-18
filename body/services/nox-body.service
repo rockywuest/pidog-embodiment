@@ -10,7 +10,7 @@ WorkingDirectory=/home/pidog
 ExecStart=/usr/bin/python3 -u /home/pidog/nox_daemon.py
 Restart=on-failure
 RestartSec=5
-Environment=PATH=/home/pidog/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/pidog/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHONUNBUFFERED=1
 Environment=SDL_AUDIODRIVER=alsa
 # AUDIODEV intentionally not set here: the daemon auto-detects the speaker;

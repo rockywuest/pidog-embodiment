@@ -391,6 +391,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             }
             if _behavior_engine:
                 resp["behavior"] = _behavior_engine.get_state()
+            # The daemon probes the robot_hat MCU on I2C (issue #12): when it
+            # does not answer, every motion command is lost silently.
+            i2c = sensors.get("i2c") or {}
+            if i2c.get("responding") is False:
+                resp["warning"] = f"servo controller unreachable — {i2c.get('error')}"
+                resp["hint"] = i2c.get("hint")
             self._send_json(resp)
         
         elif path == "/perception":
@@ -530,6 +536,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         result["warning"] = (
                             "battery rail reads 0.0 V - servos are unpowered; "
                             "motion commands will succeed but nothing will move")
+                i2c = raw.get("i2c") or {}
+                if i2c.get("responding") is False:
+                    result["i2c"] = i2c
+                    result["warning"] = f"servo controller unreachable — {i2c.get('error')}"
+                    result["hint"] = i2c.get("hint")
                     obs = be.get("obstacles", {})
                     scan = obs.get("last_scan", {})
                     if scan.get("forward"):
