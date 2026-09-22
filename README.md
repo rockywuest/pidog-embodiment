@@ -463,7 +463,10 @@ curl -X POST http://your-robot.local:8888/behavior/start \
   -d '{"behavior": "patrol"}'
 
 # Stop all behaviors (servos auto-disable after 120s idle)
+# Also drops motion frames already queued, so the dog stops now instead of
+# finishing the queue; the reply reports how many were dropped (issue #25).
 curl -X POST http://your-robot.local:8888/behavior/stop
+# → {"ok": true, "stopped": true, "motion_frames_dropped": 227}
 ```
 
 ## 🛡️ Security

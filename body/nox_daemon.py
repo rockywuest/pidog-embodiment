@@ -106,6 +106,8 @@ except Exception:
 # I2C reachability diagnostics (issue #12) — stdlib only, ships next to us.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nox_i2c_diag import mcu_diag  # noqa: E402
+from nox_motion import buffer_depth as _buffer_depth  # noqa: E402
+from nox_motion import drain as _drain_motion  # noqa: E402
 
 # ─── Global state ───
 dog = None
@@ -442,12 +444,7 @@ def _dead_action_threads():
 
 def _action_buffer_depth():
     """Total motion frames waiting in the SDK's action buffers."""
-    total = 0
-    for name in ("legs_action_buffer", "head_action_buffer", "tail_action_buffer"):
-        buf = getattr(dog, name, None)
-        if buf is not None:
-            total += len(buf)
-    return total
+    return _buffer_depth(dog)
 
 
 def cmd_servo_test():
@@ -965,6 +962,12 @@ def cmd_emergency_stop():
     global _idle_state, _servo_pwm_disabled
     print("[nox] EMERGENCY STOP triggered!", flush=True)
     with dog_lock:
+        # Clear the queue FIRST: do_action only appends, so without this the
+        # `lie` below waits behind every frame still pending (issue #25).
+        drained = _drain_motion(dog)
+        if drained["drained"]:
+            print(f"[nox] Dropped {drained['drained']} queued motion frames "
+                  f"(via {drained['via']})", flush=True)
         try:
             dog.do_action("lie", speed=100)
         except Exception:
@@ -974,7 +977,22 @@ def cmd_emergency_stop():
         except Exception:
             pass
     _idle_state = "resting"
-    return {"ok": True, "emergency": True}
+    return {"ok": True, "emergency": True, "motion": drained}
+
+
+def cmd_stop_motion():
+    """Drop every queued motion frame immediately (issue #25).
+
+    Stopping the behaviour engine only stops new frames from being queued; the
+    ones already buffered keep the dog moving for many seconds afterwards.
+    """
+    with dog_lock:
+        result = _drain_motion(dog)
+    if result["drained"]:
+        print(f"[nox] Motion stop: dropped {result['drained']} queued frames "
+              f"(via {result['via']})", flush=True)
+    result["ok"] = not result.get("error")
+    return result
 
 
 def cmd_three_way_scan():
@@ -1050,6 +1068,7 @@ COMMANDS = {
     "scan_sweep": lambda args: cmd_scan_sweep(args.get("angles"), args.get("settle_ms", 200), args.get("samples", 3)),
     "three_way_scan": lambda args: cmd_three_way_scan(),
     "emergency_stop": lambda args: cmd_emergency_stop(),
+    "stop_motion": lambda args: cmd_stop_motion(),
 }
 
 

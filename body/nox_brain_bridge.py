@@ -847,8 +847,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif path == "/behavior/stop":
             if _behavior_engine:
                 _behavior_engine.stop()
+                # Stopping the engine only stops NEW frames. Frames it already
+                # queued keep the dog moving for many seconds, and the `sleep`
+                # below would land behind them (issue #25) — so drain first.
+                motion = send_to_daemon({"cmd": "stop_motion"})
                 send_to_daemon({"cmd": "sleep"})
                 result = {"ok": True, "stopped": True}
+                if isinstance(motion, dict) and not motion.get("error"):
+                    result["motion_frames_dropped"] = motion.get("drained", 0)
+                elif isinstance(motion, dict):
+                    result["motion_error"] = motion["error"]
                 self._send_json(result)
             else:
                 self._send_json({"error": "behavior engine not running"}, 503)
