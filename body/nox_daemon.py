@@ -108,6 +108,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nox_i2c_diag import mcu_diag  # noqa: E402
 from nox_motion import buffer_depth as _buffer_depth  # noqa: E402
 from nox_motion import drain as _drain_motion  # noqa: E402
+from nox_audio import ensure_music  # noqa: E402
 
 # ─── Global state ───
 dog = None
@@ -228,10 +229,18 @@ def init_dog():
     dog.rgb_strip.set_mode('breath', [0, 0, 0] if _is_sleep_hours() else [128, 0, 255], bps=0.8)
     # Health check: report what's working
     _hw_status = []
-    if hasattr(dog, 'music') and dog.music is not None:
+    # The SDK leaves .music unset when "sound_effect init ... fail" (issue #24).
+    # bark/howling/pant call dog.speak() mid-sequence, so without a stand-in the
+    # whole action dies with AttributeError — not just its sound.
+    _audio = ensure_music(dog, device=_PLAYBACK_DEVICE)
+    if _audio["attached"]:
+        print(f"[nox] Audio: SDK sound engine missing, using {_audio['reason']}", flush=True)
+        _hw_status.append("audio:aplay-shim")
+    elif getattr(dog, "music", None) is not None:
         _hw_status.append("audio:pygame")
     else:
-        _hw_status.append("audio:aplay-fallback")
+        print(f"[nox] WARNING: no audio at all — {_audio['reason']}", flush=True)
+        _hw_status.append("audio:none")
     if hasattr(dog, 'pitch'):
         _hw_status.append("imu:ok")
     else:
@@ -424,6 +433,20 @@ def cmd_move(action, steps=3, speed=80, internal=False):
             try:
                 preset(dog)
                 return {"ok": True, "action": action, "via": "preset"}
+            except AttributeError as e:
+                if "music" in str(e):
+                    # Should not happen since init attaches a fallback, but a
+                    # bare AttributeError here sent issue #24 hunting in the
+                    # wrong place — so say what it means.
+                    return {"ok": False, "action": action,
+                            "error": f"action '{action}' plays a sound, and this "
+                                     "robot's SDK sound engine failed to start "
+                                     "(sound_effect init ... fail)",
+                            "hint": "restart nox-body: the daemon attaches an "
+                                    "aplay fallback at startup. If it persists, "
+                                    "check: aplay -l  and the AUDIODEV setting"}
+                return {"ok": False, "action": action,
+                        "error": f"preset action failed: {type(e).__name__}: {e}"}
             except Exception as e:
                 return {"ok": False, "action": action,
                         "error": f"preset action failed: {type(e).__name__}: {e}"}

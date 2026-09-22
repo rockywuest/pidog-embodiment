@@ -3,6 +3,7 @@
 
 Run from the repo root (or the examples/ directory) on the brain machine:
     python3 examples/multi_body.py
+    PIDOG_HOST=mydog.local PICAR_HOST=mycar.local python3 examples/multi_body.py
 """
 
 import os
@@ -10,10 +11,13 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from brain.nox_body_client import BodyClient
 
+# Hostnames come from the environment so this file needs no editing.
+PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", 8888))
+
 # Define available bodies
 bodies = {
-    "dog": BodyClient("pidog.local", 8888),
-    "car": BodyClient("picar.local", 8888),
+    "dog": BodyClient(os.environ.get("PIDOG_HOST", "pidog.local"), PORT),
+    "car": BodyClient(os.environ.get("PICAR_HOST", "picar.local"), PORT),
 }
 
 # Choose active body
