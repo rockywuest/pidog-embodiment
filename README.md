@@ -224,6 +224,36 @@ commands with an explicit error instead of a fake `ok`, and `doctor.sh`
 checks the unit PATH and the bus. On an existing install:
 `git pull && sudo ./scripts/install-body.sh`.
 
+### Nox Mode vs. SunFounder Mode
+
+The Nox services and SunFounder's own example scripts drive the same hardware
+and cannot run at the same time (the examples fail with `GPIO busy`). Pick one:
+
+```bash
+# SunFounder examples now
+sudo systemctl stop nox-body nox-bridge nox-voice
+
+# boot into SunFounder mode by default
+sudo systemctl disable nox-body nox-bridge nox-voice
+
+# back to Nox mode, now and at every boot
+sudo systemctl enable --now nox-body nox-bridge nox-voice
+```
+
+Inside Nox mode, the **autonomous behavior engine** (idle / patrol / play) starts
+with the bridge. To keep the dog still unless you command it:
+
+| Scope | How |
+|---|---|
+| Until the next restart | `curl -X POST http://127.0.0.1:8888/behavior/stop` |
+| Permanently | add `NOX_NO_AUTO=1` to `body/nox.env`, then `sudo systemctl restart nox-bridge` |
+| On demand again | `curl -X POST http://127.0.0.1:8888/behavior/start -H 'Content-Type: application/json' -d '{"state": "idle"}'` |
+
+Independent of the engine, the daemon protects the servos: after ~60 s without
+commands the dog lies down, after ~120 s the servos switch off, and the next
+command wakes it. The LEDs are the daemon's status light (purple awake, blue
+resting, dim asleep) and keep breathing even with the engine disabled.
+
 ### Known Upstream Quirks (worked around)
 
 - **robot_hat 2.5.2a1**: its `get_battery_voltage()` crashes with
