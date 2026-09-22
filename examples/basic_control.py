@@ -2,7 +2,9 @@
 """Basic robot control example.
 
 Run from the repo root (or the examples/ directory) on the brain machine:
-    python3 examples/basic_control.py
+    python3 examples/basic_control.py                 # uses pidog.local
+    PIDOG_HOST=192.168.1.42 python3 examples/basic_control.py
+    python3 examples/basic_control.py mydog.local     # or pass it directly
 """
 
 import os
@@ -10,8 +12,13 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from brain.nox_body_client import BodyClient
 
-# Connect to your robot (hostname or IP of the body)
-robot = BodyClient("pidog.local", 8888)
+# Your robot's hostname or IP. No need to edit this file: pass it as the first
+# argument, or set PIDOG_HOST (the same variable the brain services use).
+HOST = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PIDOG_HOST", "pidog.local")
+PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", 8888))
+
+print(f"Connecting to {HOST}:{PORT} ...")
+robot = BodyClient(HOST, PORT)
 
 # Check status
 status = robot.status()

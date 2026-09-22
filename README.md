@@ -224,6 +224,28 @@ commands with an explicit error instead of a fake `ok`, and `doctor.sh`
 checks the unit PATH and the bus. On an existing install:
 `git pull && sudo ./scripts/install-body.sh`.
 
+### Where the Robot's Address Is Configured
+
+No hostname is hard-coded in the code paths you run. Each side reads it from one
+place:
+
+| What | Where | Setting |
+|---|---|---|
+| Body → brain (callbacks, voice) | `body/nox.env` | `BRAIN_HOST`, `BRAIN_CALLBACK_PORT` |
+| Brain → body (poller, client) | `brain/services/nox-poller.service` | `PIDOG_HOST`, `PIDOG_BRIDGE_PORT` |
+| Brain voice service | `/etc/default/nox-brain` (created by `install-brain.sh`) | `PIDOG_HOST` |
+| Examples and CLI | environment or argument | `PIDOG_HOST`, or `./scripts/deploy-body.sh user@host` |
+
+```bash
+# examples take the address without editing any file
+PIDOG_HOST=192.168.1.42 python3 examples/basic_control.py
+python3 examples/basic_control.py mydog.local
+```
+
+The **I2C address of the robot_hat MCU** is not configured at all: the SDK finds
+it on the bus (0x14, 0x15 or 0x16) at every start. That is what the `PATH` fix in
+#22 restored — see the troubleshooting note above.
+
 ### Nox Mode vs. SunFounder Mode
 
 The Nox services and SunFounder's own example scripts drive the same hardware
@@ -265,6 +287,12 @@ resting, dim asleep) and keep breathing even with the engine disabled.
   dog with a 0.0 V battery. The daemon probes the MCU itself, turns a dead bus
   into `battery_v: "error"` plus an I2C explanation, and fails motion commands
   loudly.
+- **`sound_effect init ... fail`** leaves `Pidog` without a `.music` object, and
+  every sound path then raises `AttributeError: 'Pidog' object has no attribute
+  'music'`. Because `bark`, `howling` and `pant` call `speak()` *inside* their
+  motion sequence, the movement was lost too (#24). The daemon now attaches an
+  `aplay`-backed stand-in at startup, so those actions work with sound; the log
+  says `Audio: SDK sound engine missing, using aplay fallback`.
 - **SunFounder SDK `do_action()`** silently ignores unknown actions and its
   action threads die permanently on their first exception. The daemon
   detects dead threads and reports them loudly instead of returning fake
@@ -537,10 +565,12 @@ pidog-embodiment/
 │   ├── pidog_memory.py            # Drift-style memory with co-occurrence + decay
 │   ├── nox_voice_loop_v3.py       # Wake word + faster-whisper STT
 │   ├── nox_control.py             # Direct servo control utilities
+│   ├── nox_i2c_diag.py            # I2C/MCU reachability diagnostics (issue #12)
+│   ├── nox_motion.py              # Draining the SDK's motion queue (issue #25)
+│   ├── nox_audio.py               # aplay fallback when the SDK has no sound (issue #24)
 │   ├── adapters/                  # Hardware-specific adapters
 │   │   ├── pidog.py               # SunFounder PiDog
-│   │   ├── picar.py               # Robot car (template)
-│   │   └── custom.py              # Build your own
+│   │   └── picar.py               # Robot car (template)
 │   ├── requirements.txt
 │   └── services/
 │       ├── nox-body.service       # Hardware daemon (TCP 9999)
@@ -553,14 +583,16 @@ pidog-embodiment/
 ├── models/                        # ONNX + GGUF models (gitignored)
 │   └── download_models.sh         # One-click model download
 ├── scripts/
-│   ├── deploy.sh                  # Full deployment script
-│   ├── pidog.sh                   # CLI control script
-│   └── setup-remote.sh            # Remote access setup
+│   ├── install-body.sh            # Install the body services for this machine
+│   ├── install-brain.sh           # Install the brain service
+│   ├── deploy-body.sh             # Copy body code to a robot over SSH
+│   ├── doctor.sh                  # Post-install health check
+│   └── pidog.sh                   # CLI control script
 ├── docs/
 │   ├── architecture.md
-│   ├── api-reference.md
-│   ├── adding-a-body.md
-│   └── remote-access.md
+│   ├── remote-access.md
+│   └── media-guide.md
+├── tests/                         # pytest — runs without hardware
 ├── examples/
 │   ├── basic_control.py
 │   ├── face_registration.py
