@@ -3,7 +3,13 @@
 # Deploy to PiDog as systemd service or cron
 # Checks connectivity every 60s, recovers if lost
 
-GATEWAY="192.168.68.1"  # Router
+# Router address. Detected from the routing table so this works on any network;
+# override with GATEWAY=... if the default route is not what you want to probe.
+GATEWAY="${GATEWAY:-$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')}"
+if [[ -z "$GATEWAY" ]]; then
+  echo "$(date -Is) no default route found — set GATEWAY=<router-ip>" >&2
+  exit 1
+fi
 CHECK_INTERVAL=60
 MAX_FAILURES=3
 LOG="/tmp/wifi_watchdog.log"

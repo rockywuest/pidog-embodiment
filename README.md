@@ -438,12 +438,14 @@ export PIDOG_HOST="100.x.x.x"
 Control your robot from anywhere via Telegram:
 
 ```bash
-# Set your Telegram bot token
 export TELEGRAM_BOT_TOKEN="your-token"
+# Required: without an allowlist the bot refuses every command. Send any message
+# to the bot once — it replies with your user ID.
+export TELEGRAM_ALLOWED_USERS="123456789"      # comma-separated for several
 python3 brain/telegram_bot.py
 ```
 
-Commands: `/status`, `/photo`, `/speak <text>`, `/move <action>`, `/face list`
+Commands: `/status`, `/photo`, `/speak <text>`, `/move <action>`, `/faces`
 
 ## 👁️ Local Vision (SmolVLM-256M)
 
@@ -527,21 +529,38 @@ curl -X POST http://your-robot.local:8888/behavior/stop
 # → {"ok": true, "stopped": true, "motion_frames_dropped": 227}
 ```
 
-## 🛡️ Security
+## 🛡️ Security — read this before exposing the robot
 
-- **API Token Authentication** — Set `NOX_API_TOKEN` environment variable
-- **Rate Limiting** — 60 requests/minute per IP
-- **Input Validation** — All parameters sanitized
-- **No secrets in code** — API keys via environment only
-- **Firewall ready** — Only port 8888 needed
+**The bridge has no authentication.** Anyone who can reach port 8888 can walk
+the robot, take photos and play sounds. Treat it as a LAN-only service.
+
+This section used to claim token auth, rate limiting and input validation. The
+code for those exists in `shared/security.py` but is imported by nothing, so the
+claim was false. Tracked in #29 — either wired in or removed, not documented as
+present in the meantime.
+
+What is actually true today:
+
+| | Status |
+|---|---|
+| Bridge authentication | ❌ none — every request is served |
+| Rate limiting | ❌ none |
+| Input validation | ⚠️ partial: unknown actions and malformed JSON are rejected loudly; `/rgb`, `/head`, `/speak` pass values through |
+| Secrets in code | ✅ none — everything comes from the environment, enforced by `tests/test_no_private_data.py` |
+| Telegram bot | ✅ refuses every command unless `TELEGRAM_ALLOWED_USERS` lists your user ID |
+
+Recommended setup until authentication exists:
 
 ```bash
-# Enable authentication
-export NOX_API_TOKEN="your-secret-token"
-
-# All requests need the token:
-curl -H "Authorization: Bearer your-secret-token" http://robot:8888/status
+# 1. Do not forward port 8888 from your router.
+# 2. Restrict the bridge to the LAN and your VPN (example for ufw):
+sudo ufw allow from 192.168.0.0/16 to any port 8888 proto tcp
+sudo ufw allow from 100.64.0.0/10 to any port 8888 proto tcp   # Tailscale CGNAT
+# 3. Reach the robot from outside via VPN only — see docs/remote-access.md.
 ```
+
+Ports in use: **8888 inbound on the body** (bridge), **8889 inbound on the
+brain** (voice callbacks), and **9999 on the body's loopback only** (daemon).
 
 ## 📁 Project Structure
 

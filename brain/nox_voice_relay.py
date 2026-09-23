@@ -39,22 +39,32 @@ from socketserver import ThreadingMixIn
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = int(os.environ.get("RELAY_PORT", "8889"))
 
-# PiDog Bridge (auf dem Pi 4)
-BRIDGE_HOST = os.environ.get("PIDOG_HOST", "192.168.68.119")
+# PiDog Bridge (on the robot)
+BRIDGE_HOST = os.environ.get("PIDOG_HOST", "pidog.local")
 BRIDGE_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
-# Fallback Tailscale wenn LAN nicht erreichbar
-BRIDGE_HOST_TS = os.environ.get("PIDOG_HOST_TS", "100.67.236.125")
+# Optional second address tried when the first is unreachable (e.g. a VPN IP).
+# Empty by default: no address of anyone's private network belongs in this file.
+BRIDGE_HOST_TS = os.environ.get("PIDOG_HOST_TS", "")
 BRIDGE_URL = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}"
-BRIDGE_URL_TS = f"http://{BRIDGE_HOST_TS}:{BRIDGE_PORT}"
+BRIDGE_URL_TS = f"http://{BRIDGE_HOST_TS}:{BRIDGE_PORT}" if BRIDGE_HOST_TS else ""
 
-# Clawdbot Gateway (auf dem Pi 5, localhost)
-CLAWDBOT_HOST = os.environ.get("CLAWDBOT_HOST", "100.75.58.120")
-CLAWDBOT_PORT = int(os.environ.get("CLAWDBOT_PORT", "18789"))
-CLAWDBOT_TOKEN = os.environ.get(
-    "CLAWDBOT_TOKEN",
-    "a34c855b25f46c96314cfeddb0c61f3c364b1edd257bffc8"
-)
-CLAWDBOT_URL = f"http://{CLAWDBOT_HOST}:{CLAWDBOT_PORT}"
+# Gateway that answers the conversational requests (same machine by default).
+GATEWAY_HOST = os.environ.get("CLAWDBOT_HOST", "127.0.0.1")
+GATEWAY_PORT = int(os.environ.get("CLAWDBOT_PORT", "18789"))
+# No default: a token in source is a published token. Set CLAWDBOT_TOKEN in the
+# service's EnvironmentFile. Without it the agent tier is skipped, loudly.
+GATEWAY_TOKEN = os.environ.get("CLAWDBOT_TOKEN", "")
+CLAWDBOT_HOST, CLAWDBOT_PORT = GATEWAY_HOST, GATEWAY_PORT  # kept for readability below
+CLAWDBOT_TOKEN = GATEWAY_TOKEN
+CLAWDBOT_URL = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}"
+
+# Who the robot belongs to. Real names (children's especially) do not belong in
+# a public repository, so this comes from the environment; NOX_HOUSEHOLD is a
+# free-text line, e.g. "Deine Familie: Alex (Herrchen), Sam (Schwester)".
+HOUSEHOLD_LINE = os.environ.get(
+    "NOX_HOUSEHOLD",
+    "Du gehörst zu einem Haushalt, den du noch kennenlernst — frage nach Namen, "
+    "wenn du sie brauchst.")
 
 # Conversation
 MAX_HISTORY = 8  # Letzte N Austausche behalten
@@ -405,14 +415,18 @@ class BridgeCircuitBreaker:
         return self.active_url
     
     def try_failover(self):
-        """Wechsle zwischen LAN und Tailscale."""
+        """Switch to the secondary bridge address, if one is configured."""
         with self._lock:
+            if not BRIDGE_URL_TS:
+                log.warning("Bridge unreachable and no PIDOG_HOST_TS configured "
+                            "— staying on %s", BRIDGE_URL)
+                return
             if self.active_url == BRIDGE_URL:
                 self.active_url = BRIDGE_URL_TS
-                log.info(f"Bridge Failover: LAN → Tailscale ({BRIDGE_URL_TS})")
+                log.info(f"Bridge failover: primary → secondary ({BRIDGE_URL_TS})")
             else:
                 self.active_url = BRIDGE_URL
-                log.info(f"Bridge Failover: Tailscale → LAN ({BRIDGE_URL})")
+                log.info(f"Bridge failover: secondary → primary ({BRIDGE_URL})")
 
 
 bridge_breaker = BridgeCircuitBreaker()
@@ -503,7 +517,7 @@ Felder:
 
 Verfügbare Aktionen: forward, backward, turn_left, turn_right, stand, sit, lie, wag_tail, bark, trot, doze_off, stretch, push_up, howling, shake_head, pant, nod
 
-Deine Familie: Rocky (Herrchen), Bea (seine Frau), Noah (14), Klara (13), Eliah (11).
+{HOUSEHOLD_LINE}
 Du sprichst IMMER Deutsch. Halte Antworten kurz und natürlich — du bist ein Hund, kein Chatbot.
 
 Beispiele:
@@ -521,6 +535,7 @@ Mensch: "guten morgen"
 
 Mensch: "ich bin traurig"
 {"speak":"Oh nein! Komm, ich kuschel mit dir. Es wird bestimmt wieder besser.","actions":["forward","wag_tail"],"emotion":"love"}"""
+CLAWDBOT_SYSTEM_PROMPT = CLAWDBOT_SYSTEM_PROMPT.replace("{HOUSEHOLD_LINE}", HOUSEHOLD_LINE)
 
 
 def call_clawdbot_chat(user_text: str, context: str = "") -> dict:
@@ -545,6 +560,11 @@ def call_clawdbot_chat(user_text: str, context: str = "") -> dict:
         "temperature": 0.7,
     }
     
+    if not CLAWDBOT_TOKEN:
+        log.error("CLAWDBOT_TOKEN is not set — set it in the service's "
+                  "EnvironmentFile; skipping the gateway request")
+        return None
+
     url = f"{CLAWDBOT_URL}/v1/chat/completions"
     body = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, method="POST")
@@ -643,6 +663,11 @@ Antworte weiterhin als JSON: {"speak":"...","actions":[...],"emotion":"..."}"""
         "temperature": 0.5,
     }
     
+    if not CLAWDBOT_TOKEN:
+        log.error("CLAWDBOT_TOKEN is not set — set it in the service's "
+                  "EnvironmentFile; skipping the gateway request")
+        return None
+
     url = f"{CLAWDBOT_URL}/v1/chat/completions"
     body = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, method="POST")
@@ -950,8 +975,10 @@ def main():
     log.info("Nox Voice Relay v1.0 — 3-Tier Architektur")
     log.info("=" * 60)
     log.info(f"Listen: http://{LISTEN_HOST}:{LISTEN_PORT}")
-    log.info(f"Bridge: {BRIDGE_URL} (LAN) / {BRIDGE_URL_TS} (Tailscale)")
-    log.info(f"Clawdbot: {CLAWDBOT_URL}")
+    log.info(f"Bridge: {BRIDGE_URL}"
+             + (f" / {BRIDGE_URL_TS} (secondary)" if BRIDGE_URL_TS else ""))
+    log.info(f"Gateway: {CLAWDBOT_URL}"
+             + ("" if CLAWDBOT_TOKEN else "  [no CLAWDBOT_TOKEN — agent tier disabled]"))
     log.info(f"Reflexe: {len(REFLEXES)} Trigger registriert")
     log.info(f"Agent-Keywords: {len(AGENT_KEYWORDS)}")
     log.info(f"Conversation History: max {MAX_HISTORY} Exchanges")

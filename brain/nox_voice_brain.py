@@ -24,9 +24,15 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
 # ─── Configuration ───
-PIDOG_HOST = os.environ.get("PIDOG_HOST", "192.168.68.119")
+PIDOG_HOST = os.environ.get("PIDOG_HOST", "pidog.local")
 BRIDGE_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
 BASE_URL = f"http://{PIDOG_HOST}:{BRIDGE_PORT}"
+
+# Who the robot belongs to — from the environment, never from source: real names
+# (children's especially) do not belong in a public repository.
+HOUSEHOLD_LINE = os.environ.get(
+    "NOX_HOUSEHOLD",
+    "You do not know your household yet — ask for names when you need them.")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # Any OpenAI-compatible chat-completions endpoint works. For a local Ollama:
@@ -108,8 +114,8 @@ Command mapping (user may speak English or German - map both):
 - Combinations allowed: actions:["sit","wag_tail"]
 - For questions without movement: actions:[]
 
-You are playful, curious, and loyal. You respond in German (your owner family speaks German).
-Your owner is Rocky. His family: Bea (wife), Noah (14), Klara (13), Eliah (11).
+You are playful, curious, and loyal. You respond in the language you are spoken to.
+{HOUSEHOLD_LINE}
 
 Examples:
 User: "sit"
@@ -129,6 +135,7 @@ User: "good boy"
 
 User: "do a push up"
 {"speak":"Klar, schau mal!","actions":["push_up"],"emotion":"excited"}"""
+SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{HOUSEHOLD_LINE}", HOUSEHOLD_LINE)
 
 
 # ─── Bridge Communication ───
