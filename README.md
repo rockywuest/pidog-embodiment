@@ -536,7 +536,7 @@ the robot, take photos and play sounds. Treat it as a LAN-only service.
 
 This section used to claim token auth, rate limiting and input validation. The
 code for those exists in `shared/security.py` but is imported by nothing, so the
-claim was false. Tracked in #29 — either wired in or removed, not documented as
+claim was false. Tracked in #30 — either wired in or removed, not documented as
 present in the meantime.
 
 What is actually true today:
