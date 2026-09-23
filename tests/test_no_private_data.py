@@ -45,10 +45,16 @@ PERSONAL_PATTERN = re.compile(
     r"(?i)\b(Bea|Noah|Klara|Eliah)\b\s*\(?\d{0,2}\)?\s*(,|\)|$|\s)")
 
 
+SELF = "tests/" + Path(__file__).name
+
+
 def tracked_files(*suffixes):
+    """Tracked files with these extensions, minus this file — it quotes the very
+    patterns it searches for, including the leaked token, and would flag itself."""
     out = subprocess.run(["git", "-C", str(REPO), "ls-files"],
                          capture_output=True, text=True, check=True).stdout
-    return [f for f in out.split("\n") if f and f.endswith(suffixes)]
+    return [f for f in out.split("\n")
+            if f and f.endswith(suffixes) and f != SELF]
 
 
 COMMENT_STARTS = ("#", '"""', "'''", "*", "//")
