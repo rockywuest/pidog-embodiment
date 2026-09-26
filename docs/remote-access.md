@@ -82,8 +82,14 @@ For the best experience, use **Tailscale + Telegram**:
 
 ## Security Checklist
 
-- [ ] Set `NOX_API_TOKEN` on the body
-- [ ] Restrict Telegram bot to your user ID(s)
-- [ ] Use Tailscale ACLs to limit device access
-- [ ] Enable firewall: only expose port 8888 to VPN interface
-- [ ] Rotate API tokens periodically
+The bridge has **no authentication** — see the security section in the README.
+Everything below is therefore about keeping it unreachable from outside.
+
+- [ ] Never forward port 8888 from your router
+- [ ] Firewall the bridge to your LAN and VPN range only
+- [ ] `TELEGRAM_ALLOWED_USERS` set to your user ID — without it the bot refuses
+      every command (that is the intended default, not a failure)
+- [ ] Use Tailscale ACLs to limit which devices may reach the robot
+- [ ] `CLAWDBOT_TOKEN` and other secrets in the service EnvironmentFile,
+      never in a source file
+- [ ] Rotate the gateway token periodically, and after any repo leak

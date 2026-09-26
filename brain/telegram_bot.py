@@ -228,7 +228,7 @@ def cmd_face(chat_id, args):
     subcmd = args[0].lower()
     
     if subcmd == "list":
-        result = bridge_get("/face/list")
+        result = bridge_get("/faces")
         if "error" in result:
             return send_message(chat_id, f"❌ {result['error']}")
         
@@ -341,8 +341,18 @@ def handle_update(update):
     if not chat_id or not text:
         return
     
-    # Access control
-    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+    # Access control. An empty allowlist used to mean "everyone", which for a bot
+    # that walks a robot and takes photos is the wrong way round: anyone who
+    # found the bot could drive it. Closed by default now.
+    if not ALLOWED_USERS:
+        send_message(chat_id,
+                     "⛔ This bot has no allowlist configured, so it accepts no "
+                     "commands.\nSet TELEGRAM_ALLOWED_USERS to your Telegram user "
+                     "ID and restart.\nYour user ID: " + user_id)
+        log_line = f"refused command from {user_id}: TELEGRAM_ALLOWED_USERS is empty"
+        print(log_line, flush=True)
+        return
+    if user_id not in ALLOWED_USERS:
         send_message(chat_id, "⛔ Unauthorized. Your user ID: " + user_id)
         return
     
@@ -373,7 +383,7 @@ def main():
     
     print(f"🤖 Nox Telegram Bot starting...")
     print(f"   Body: {BODY_URL}")
-    print(f"   Allowed users: {ALLOWED_USERS or 'ALL (no restriction!)'}")
+    print(f"   Allowed users: {ALLOWED_USERS or 'NONE — set TELEGRAM_ALLOWED_USERS, the bot refuses every command until then'}")
     
     # Test connection
     me = tg_request("getMe")

@@ -3,7 +3,7 @@
 
 Run from the repo root (or the examples/ directory) on the brain machine:
     python3 examples/basic_control.py                 # uses pidog.local
-    PIDOG_HOST=192.168.1.42 python3 examples/basic_control.py
+    PIDOG_HOST=mydog.local python3 examples/basic_control.py
     python3 examples/basic_control.py mydog.local     # or pass it directly
 """
 

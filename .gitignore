@@ -17,6 +17,9 @@ __pycache__/
 # Environment
 .env
 .env.local
+# install-body.sh creates this inside the repo, and it holds the user's own
+# hosts and any tokens they add.
+body/nox.env
 *.key
 
 # OS
