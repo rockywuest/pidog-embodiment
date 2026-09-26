@@ -10,6 +10,7 @@ everyone else, so this test fails on the patterns that caused it. If it fires on
 something legitimate, add it to ALLOWED with a reason rather than loosening a
 pattern.
 """
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -49,8 +50,8 @@ SELF = "tests/" + Path(__file__).name
 
 
 def tracked_files(*suffixes):
-    """Tracked files with these extensions, minus this file — it quotes the very
-    patterns it searches for, including the leaked token, and would flag itself."""
+    """Tracked files with these extensions, minus this file — it quotes the
+    patterns it searches for and would flag itself."""
     out = subprocess.run(["git", "-C", str(REPO), "ls-files"],
                          capture_output=True, text=True, check=True).stdout
     return [f for f in out.split("\n")
@@ -106,10 +107,30 @@ def test_no_household_names(path):
     assert not hits, "household names in the repo:\n" + "\n".join(hits)
 
 
+# The gateway token that was published in e6ae049, stored as a digest: a guard
+# that quotes the secret it guards against puts it back into the current tree,
+# where secret scanners and anyone reading the tests would find it.
+LEAKED_TOKEN_SHA256 = "9b1cae767938ae38507c67febbbdaf708ba894305466dbf64355d2132781d745"
+HEX_RUN = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32,}(?![0-9a-fA-F])")
+
+
 def test_the_leaked_token_is_gone():
-    """The exact value that was published, so a revert cannot bring it back."""
-    leaked = "a34c855b25f46c96314cfeddb0c61f3c364b1edd257bffc8"
-    for path in tracked_files(".py", ".sh", ".service", ".md", ".json"):
-        if "test_no_private_data" in path:
-            continue
-        assert leaked not in (REPO / path).read_text(errors="replace"), path
+    """A revert or a stale branch must not bring the published token back."""
+    for path in tracked_files(".py", ".sh", ".service", ".md", ".json", ".txt", ".yml"):
+        for candidate in HEX_RUN.findall((REPO / path).read_text(errors="replace")):
+            digest = hashlib.sha256(candidate.lower().encode()).hexdigest()
+            assert digest != LEAKED_TOKEN_SHA256, (
+                f"{path}: the gateway token published in e6ae049 is back")
+
+
+def test_the_digest_mechanism_detects_a_token(monkeypatch):
+    """The mechanism is verified with a made-up token, so the real one stays out
+    of this file: it is extracted from a source line and matched by digest."""
+    fake = "0123456789abcdef" * 3
+    line = f'GATEWAY_TOKEN = os.environ.get("CLAWDBOT_TOKEN", "{fake}")'
+    assert HEX_RUN.findall(line) == [fake], "a token default must be extractable"
+    digest = hashlib.sha256(fake.encode()).hexdigest()
+    assert digest != LEAKED_TOKEN_SHA256
+    # and a digest comparison flags it when it is the watched value
+    monkeypatch.setattr("tests.test_no_private_data.LEAKED_TOKEN_SHA256", digest)
+    assert hashlib.sha256(fake.encode()).hexdigest() == digest
