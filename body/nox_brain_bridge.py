@@ -45,7 +45,9 @@ DAEMON_HOST = "localhost"
 DAEMON_PORT = 9999
 
 # Brain callback (push voice to brain instead of waiting for poll)
-BRAIN_HOST = os.environ.get("BRAIN_HOST", "192.168.1.18")
+# 127.0.0.1 is the safe default: brain and body on one machine. Set BRAIN_HOST
+# in body/nox.env when the brain runs elsewhere.
+BRAIN_HOST = os.environ.get("BRAIN_HOST", "127.0.0.1")
 BRAIN_CALLBACK_PORT = int(os.environ.get("BRAIN_CALLBACK_PORT", "8889"))
 PHOTO_DIR = "/tmp"
 HOME_DIR = os.path.expanduser("~")
@@ -495,15 +497,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if raw.get("error"):
                 self._send_json({"ok": False, "error": raw["error"]}, 503)
             else:
+                # battery_v is the STRING "error" when the daemon cannot read the
+                # ADC — which is exactly what a dead I2C bus produces (#12). The
+                # comparisons below then raised TypeError, so /sensors answered
+                # HTTP 500 in the one state a user most needs to inspect.
                 batt_v = raw.get("battery_v", 0)
-                batt_pct = max(0, min(100, int((batt_v - 6.0) / (8.4 - 6.0) * 100))) if batt_v > 0 else 0
+                batt_readable = isinstance(batt_v, (int, float)) and not isinstance(batt_v, bool)
+                batt_pct = (max(0, min(100, int((batt_v - 6.0) / (8.4 - 6.0) * 100)))
+                            if batt_readable and batt_v > 0 else None)
                 result = {
                     "ok": True,
                     "ts": raw.get("ts", time.time()),
                     "battery": {
                         "voltage": batt_v,
                         "percent": batt_pct,
-                        "charging": batt_v > 8.35,
+                        "charging": batt_readable and batt_v > 8.35,
+                        "readable": batt_readable,
                     },
                     "distance": {
                         "forward_cm": raw.get("distance_cm"),
@@ -536,16 +545,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         result["warning"] = (
                             "battery rail reads 0.0 V - servos are unpowered; "
                             "motion commands will succeed but nothing will move")
-                i2c = raw.get("i2c") or {}
-                if i2c.get("responding") is False:
-                    result["i2c"] = i2c
-                    result["warning"] = f"servo controller unreachable — {i2c.get('error')}"
-                    result["hint"] = i2c.get("hint")
+                    # Obstacle data belongs to the engine, not to the I2C check:
+                    # my edit in #22 left these lines inside the i2c branch, so
+                    # they raised NameError with NOX_NO_AUTO=1 and only reported
+                    # distances when the bus was broken.
                     obs = be.get("obstacles", {})
                     scan = obs.get("last_scan", {})
                     if scan.get("forward"):
                         result["distance"]["forward_cm"] = scan["forward"]
                         result["distance"]["scan_age_s"] = obs.get("scan_age_s")
+                i2c = raw.get("i2c") or {}
+                if i2c.get("responding") is False:
+                    result["i2c"] = i2c
+                    result["warning"] = f"servo controller unreachable — {i2c.get('error')}"
+                    result["hint"] = i2c.get("hint")
                 # Add vision age if available (Sprint 5)
                 try:
                     with open(VISION_RESULT_FILE, "r") as vf:

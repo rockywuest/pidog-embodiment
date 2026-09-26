@@ -12,3 +12,5 @@ opencv-python-headless>=4.8.0
 numpy>=1.24.0
 vosk>=0.3.45
 piper-tts>=1.0.0
+onnxruntime>=1.16       # SCRFD + ArcFace face recognition (nox_face_recognition.py)
+PyYAML>=6.0             # pidog_memory.py reads/writes its store as YAML
