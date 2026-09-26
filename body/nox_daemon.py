@@ -108,7 +108,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nox_i2c_diag import mcu_diag  # noqa: E402
 from nox_motion import buffer_depth as _buffer_depth  # noqa: E402
 from nox_motion import drain as _drain_motion  # noqa: E402
-from nox_audio import ensure_music  # noqa: E402
+from nox_audio import audio_capability, ensure_music  # noqa: E402
 
 # ─── Global state ───
 dog = None
@@ -235,7 +235,10 @@ def init_dog():
     _audio = ensure_music(dog, device=_PLAYBACK_DEVICE)
     if _audio["attached"]:
         print(f"[nox] Audio: SDK sound engine missing, using {_audio['reason']}", flush=True)
-        _hw_status.append("audio:aplay-shim")
+        if _audio.get("warning"):
+            print(f"[nox] WARNING: {_audio['warning']}", flush=True)
+        _hw_status.append("audio:aplay-shim"
+                          + ("" if _audio.get("mp3_player") else "-no-mp3"))
     elif getattr(dog, "music", None) is not None:
         _hw_status.append("audio:pygame")
     else:
@@ -496,7 +499,13 @@ def cmd_servo_test():
         report_id = {"error": str(e)}
     report = {"process": report_id,
               "threads_dead": _dead_action_threads(),
-              "buffered_frames": _action_buffer_depth()}
+              "buffered_frames": _action_buffer_depth(),
+              # bark/howling/pant need an mp3 player; without one they move
+              # silently and every layer still reports success (issue #24).
+              "audio": {**audio_capability(),
+                        "device": _PLAYBACK_DEVICE,
+                        "sdk_sound_engine": getattr(dog, "music", None) is not None
+                        and type(getattr(dog, "music")).__name__ != "AplayMusic"}}
     with dog_lock:
         # Ask the bus first: if the MCU does not answer, both phases below
         # "succeed" (robot_hat swallows the errors) and nothing moves.

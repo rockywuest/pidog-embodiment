@@ -218,6 +218,15 @@ if [[ $IS_BODY -eq 1 ]]; then
     hint "then set PIPER_MODEL in body/nox.env"
   fi
 
+  # issue #24: SunFounder's sounds are .mp3 and aplay cannot play those. Without
+  # one of these players bark/howling/pant move the dog in silence.
+  if have ffplay || have mpg123 || have sox; then
+    for p in mpg123 ffplay sox; do have $p && { pass "mp3 player available ($p) — bark/howling can be heard"; break; }; done
+  else
+    fail "no mp3 player (ffplay/mpg123/sox) — bark, howling and pant will move the dog silently"
+    hint "sudo apt install mpg123"
+  fi
+
   section "Body — voice input (Vosk STT, optional)"
   vosk_model="${VOSK_MODEL_PATH:-$HOME/vosk-models/vosk-model-small-de-0.15}"
   if [[ -d "$vosk_model" ]]; then
