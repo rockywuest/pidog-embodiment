@@ -82,16 +82,9 @@ def test_without_a_device_aplay_uses_the_system_default(wav):
 
 
 def test_mp3_falls_through_the_player_chain(mp3):
-    run = Recorder(missing=["ffplay"])
+    run = Recorder(missing=["mpg123"])
     assert AplayMusic(runner=run).sound_play(mp3) is True
-    assert run.programs == ["ffplay", "mpg123"]
-
-
-def test_sox_is_invoked_with_the_default_device(mp3):
-    """sox needs an explicit -d, unlike the other two players."""
-    run = Recorder(missing=["ffplay", "mpg123"])
-    assert AplayMusic(runner=run, log=Logger()).sound_play(mp3) is True
-    assert run.calls[-1] == ["sox", mp3, "-d"]
+    assert run.programs == ["mpg123", "ffmpeg"]
 
 
 def test_volume_is_accepted_and_ignored(wav):
@@ -116,7 +109,7 @@ def test_mp3_detection_is_case_insensitive(tmp_path, suffix):
     f.write_bytes(b"ID3")
     run = Recorder()
     AplayMusic(runner=run).sound_play(str(f))
-    assert run.programs == ["ffplay"]
+    assert run.programs == ["mpg123"], "an .mp3 must not go to aplay"
 
 
 # ─── failing loudly ─────────────────────────────────────────────────────────
@@ -126,7 +119,7 @@ def test_a_failed_sound_is_logged_not_swallowed(mp3):
     only stored last_error, so a robot without an mp3 player barked mutely and
     every layer above still answered ok."""
     log = Logger()
-    music = AplayMusic(runner=Recorder(missing=["ffplay", "mpg123", "sox"]), log=log)
+    music = AplayMusic(runner=Recorder(missing=["mpg123", "ffmpeg", "sox", "ffplay"]), log=log)
 
     assert music.sound_play(mp3) is False
     assert len(log.lines) == 1
@@ -167,7 +160,7 @@ def test_ensure_music_attaches_when_the_sdk_has_none(mp3):
     assert isinstance(dog.music, AplayMusic)
     # This is the call the SDK makes inside bark() — it must now work.
     dog.music.sound_play_threading(mp3, 100).join(timeout=5)
-    assert run.programs[0] == "ffplay"
+    assert run.programs[0] == "mpg123"
 
 
 def test_ensure_music_leaves_a_healthy_robot_alone():
@@ -209,3 +202,121 @@ def test_audio_capability_shape(monkeypatch):
     cap = audio_capability()
     assert cap["wav"] is True
     assert cap["mp3"] in ("ffplay", "mpg123", "sox")
+
+
+# ─── which device to play to (issue #24, third round) ───────────────────────
+
+APLAY_TWO_CARDS = """**** List of PLAYBACK Hardware Devices ****
+card 0: Headphones [bcm2835 Headphones], device 0: bcm2835 Headphones [bcm2835 Headphones]
+  Subdevices: 8/8
+card 1: vc4hdmi [vc4-hdmi], device 0: MAI PCM i2s-hifi-0 [MAI PCM i2s-hifi-0]
+  Subdevices: 1/1
+"""
+
+APLAY_WITH_DAC = APLAY_TWO_CARDS + """card 3: sndrpihifiberry [snd_rpi_hifiberry_dac], device 0: HifiBerry DAC HiFi
+  Subdevices: 1/1
+"""
+
+
+class AplayOutput:
+    """subprocess.run stand-in that answers `aplay -l`."""
+
+    def __init__(self, stdout="", fail=False):
+        self.stdout = stdout
+        self.fail = fail
+
+    def __call__(self, cmd, **kwargs):
+        if self.fail:
+            raise FileNotFoundError("aplay")
+        return type("R", (), {"stdout": self.stdout, "returncode": 0})()
+
+
+def test_cards_are_parsed_from_aplay():
+    from body.nox_audio import list_playback_cards
+    cards = list_playback_cards(AplayOutput(APLAY_WITH_DAC))
+    assert [c["index"] for c in cards] == [0, 1, 3]
+    assert cards[2]["id"] == "sndrpihifiberry"
+
+
+def test_a_dac_is_preferred_over_the_onboard_outputs():
+    from body.nox_audio import resolve_device
+    r = resolve_device(runner=AplayOutput(APLAY_WITH_DAC))
+    assert r["device"] == "plughw:3,0"
+    assert r["usable"] is True
+    assert "3:sndrpihifiberry" in r["reason"]
+
+
+def test_without_a_dac_the_first_card_is_used():
+    from body.nox_audio import resolve_device
+    r = resolve_device(runner=AplayOutput(APLAY_TWO_CARDS))
+    assert r["device"] == "plughw:0,0"
+    assert r["usable"] is True
+
+
+def test_a_configured_device_on_a_missing_card_is_refused():
+    """The actual bug: the daemon exported AUDIODEV=plughw:3,0 on a robot with
+    only cards 0 and 1, which silenced everything and broke the SDK's mixer."""
+    from body.nox_audio import resolve_device
+    r = resolve_device("plughw:3,0", runner=AplayOutput(APLAY_TWO_CARDS))
+    assert r["device"] is None, "must fall back to the ALSA default"
+    assert r["usable"] is False
+    assert "does not exist" in r["reason"]
+    assert "0:Headphones" in r["reason"], "must list what is present"
+
+
+def test_a_configured_device_on_a_present_card_is_kept():
+    from body.nox_audio import resolve_device
+    r = resolve_device("plughw:3,0", runner=AplayOutput(APLAY_WITH_DAC))
+    assert r["device"] == "plughw:3,0"
+    assert r["usable"] is True
+
+
+def test_a_named_device_is_respected_unverified():
+    from body.nox_audio import resolve_device
+    r = resolve_device("default", runner=AplayOutput(APLAY_TWO_CARDS))
+    assert r["device"] == "default"
+    assert r["usable"] is True
+
+
+def test_no_cards_at_all_is_reported():
+    from body.nox_audio import resolve_device
+    r = resolve_device(runner=AplayOutput("**** List of PLAYBACK Hardware Devices ****\n"))
+    assert r["device"] is None
+    assert r["usable"] is False
+    assert "no playback card" in r["reason"]
+
+
+def test_missing_aplay_does_not_raise():
+    from body.nox_audio import list_playback_cards, resolve_device
+    assert list_playback_cards(AplayOutput(fail=True)) == []
+    r = resolve_device("plughw:3,0", runner=AplayOutput(fail=True))
+    assert r["device"] == "plughw:3,0", "unverifiable: respect the setting"
+
+
+def test_mp3_players_are_told_which_device_to_use(mp3):
+    """ffplay was picked first and silently played to the default device while
+    the speaker sat on another card — the same silence as no player at all."""
+    run = Recorder()
+    AplayMusic(device="plughw:3,0", runner=run).sound_play(mp3)
+    assert run.calls == [["mpg123", "-q", mp3, "-a", "plughw:3,0"]]
+
+
+def test_ffmpeg_is_used_when_mpg123_is_absent(mp3):
+    run = Recorder(missing=["mpg123"])
+    AplayMusic(device="plughw:3,0", runner=run).sound_play(mp3)
+    assert run.calls[-1] == ["ffmpeg", "-loglevel", "quiet", "-i", mp3,
+                             "-f", "alsa", "plughw:3,0"]
+
+
+def test_ffplay_is_the_last_resort_and_gets_no_device(mp3):
+    """It has no device option; it follows AUDIODEV."""
+    run = Recorder(missing=["mpg123", "ffmpeg", "sox"])
+    AplayMusic(device="plughw:3,0", runner=run).sound_play(mp3)
+    assert run.programs == ["mpg123", "ffmpeg", "sox", "ffplay"]
+    assert "plughw:3,0" not in run.calls[-1]
+
+
+def test_sox_uses_the_default_output_when_no_device_is_known(mp3):
+    run = Recorder(missing=["mpg123", "ffmpeg"])
+    AplayMusic(runner=run).sound_play(mp3)
+    assert run.calls[-1] == ["sox", mp3, "-d"]
