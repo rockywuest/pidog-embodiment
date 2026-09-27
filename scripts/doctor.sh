@@ -220,11 +220,33 @@ if [[ $IS_BODY -eq 1 ]]; then
 
   # issue #24: SunFounder's sounds are .mp3 and aplay cannot play those. Without
   # one of these players bark/howling/pant move the dog in silence.
-  if have ffplay || have mpg123 || have sox; then
-    for p in mpg123 ffplay sox; do have $p && { pass "mp3 player available ($p) — bark/howling can be heard"; break; }; done
+  if have mpg123 || have ffmpeg || have sox || have ffplay; then
+    for p in mpg123 ffmpeg sox ffplay; do have $p && { pass "mp3 player available ($p) — bark/howling can be heard"; break; }; done
   else
-    fail "no mp3 player (ffplay/mpg123/sox) — bark, howling and pant will move the dog silently"
+    fail "no mp3 player (mpg123/ffmpeg/sox/ffplay) — bark, howling and pant will move the dog silently"
     hint "sudo apt install mpg123"
+  fi
+
+  # The device matters as much as the player: sound sent to a card that does not
+  # exist is as silent as no player, and used to break the SDK's mixer too.
+  if have aplay; then
+    cards="$(aplay -l 2>/dev/null | sed -n 's/^card \([0-9]*\): \([^ ]*\).*/\1:\2/p' | tr '\n' ' ')"
+    if [[ -z "$cards" ]]; then
+      fail "aplay lists no playback card — no sound is possible on this robot"
+      hint "check the speaker/DAC wiring, then: aplay -l"
+    else
+      pass "playback cards: ${cards}"
+      dev="${AUDIODEV:-$(grep -E '^AUDIODEV=' "$BODY_DIR/nox.env" 2>/dev/null | cut -d= -f2)}"
+      if [[ -n "$dev" ]]; then
+        devcard="$(printf '%s' "$dev" | sed -n 's/.*hw:\([0-9]*\).*/\1/p')"
+        if [[ -n "$devcard" ]] && ! printf '%s' "$cards" | grep -q "${devcard}:"; then
+          fail "AUDIODEV=${dev} points at card ${devcard}, which does not exist"
+          hint "remove AUDIODEV from body/nox.env to use the detected card, or set an existing one"
+        else
+          pass "AUDIODEV=${dev} matches a present card"
+        fi
+      fi
+    fi
   fi
 
   section "Body — voice input (Vosk STT, optional)"
