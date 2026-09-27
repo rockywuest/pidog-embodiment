@@ -19,25 +19,28 @@ from pathlib import Path
 # Audio config for HifiBerry DAC (auto-detect card number)
 os.environ["SDL_AUDIODRIVER"] = "alsa"
 
-def _find_hifiberry_card():
-    """Auto-detect HifiBerry DAC ALSA card number."""
-    import subprocess as _sp
-    try:
-        result = _sp.run(["aplay", "-l"], capture_output=True, text=True, timeout=5)
-        for line in result.stdout.splitlines():
-            if "hifiberry" in line.lower() and "card" in line.lower():
-                card = line.split("card ")[1].split(":")[0]
-                print(f"[nox] HifiBerry DAC found at card {card}", flush=True)
-                return f"plughw:{card},0"
-    except Exception as e:
-        print(f"[nox] HifiBerry detection error: {e}", flush=True)
-    # Fallback: try card 3 (typical Pi 4 with HifiBerry)
-    print("[nox] HifiBerry not found, falling back to plughw:3,0", flush=True)
-    return "plughw:3,0"
+# Which ALSA device plays sound. This used to fall back to plughw:3,0 whenever
+# no HifiBerry was found, and then export it as AUDIODEV — so on a robot without
+# a card 3 it broke everything audible at once: the SDK's mixer refused to
+# initialise ("Cannot get card index for 3"), and every aplay/ffplay went to a
+# device that does not exist. Silence with no error anywhere (issue #24).
+#
+# Now: honour an explicit AUDIODEV when its card really exists, otherwise pick a
+# detected card, otherwise leave AUDIODEV unset and let ALSA use its default.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nox_audio import describe_cards, resolve_device  # noqa: E402
 
-# nox.env may pin AUDIODEV for robots whose speaker isn't auto-detectable
-_PLAYBACK_DEVICE = os.environ.get("AUDIODEV") or _find_hifiberry_card()
-os.environ["AUDIODEV"] = _PLAYBACK_DEVICE
+_audio_device = resolve_device(os.environ.get("AUDIODEV"))
+_PLAYBACK_DEVICE = _audio_device["device"]
+if _PLAYBACK_DEVICE:
+    os.environ["AUDIODEV"] = _PLAYBACK_DEVICE
+else:
+    os.environ.pop("AUDIODEV", None)
+print(f"[nox] Audio device: {_PLAYBACK_DEVICE or 'ALSA default'} "
+      f"({_audio_device['reason']})", flush=True)
+if not _audio_device["usable"]:
+    print(f"[nox] WARNING: audio device problem — {_audio_device['reason']}. "
+          f"Playback cards: {describe_cards(_audio_device['cards'])}", flush=True)
 
 SOCKET_PATH = "/tmp/nox.sock"
 PHOTO_DIR = "/tmp"
@@ -253,7 +256,6 @@ def init_dog():
     if hasattr(dog, 'ears'):
         _hw_status.append("ears:ok")
     print(f"[nox] Hardware: {', '.join(_hw_status)}", flush=True)
-    print(f"[nox] Audio device: {_PLAYBACK_DEVICE}", flush=True)
     dead = _dead_action_threads()
     if dead:
         print(f"[nox] WARNING: action thread(s) already dead after init: "
@@ -503,7 +505,10 @@ def cmd_servo_test():
               # bark/howling/pant need an mp3 player; without one they move
               # silently and every layer still reports success (issue #24).
               "audio": {**audio_capability(),
-                        "device": _PLAYBACK_DEVICE,
+                        "device": _PLAYBACK_DEVICE or "ALSA default",
+                        "device_usable": _audio_device["usable"],
+                        "device_reason": _audio_device["reason"],
+                        "cards": describe_cards(_audio_device["cards"]),
                         "sdk_sound_engine": getattr(dog, "music", None) is not None
                         and type(getattr(dog, "music")).__name__ != "AplayMusic"}}
     with dog_lock:
@@ -708,7 +713,7 @@ def cmd_speak(text):
                 print(f"[nox] pygame playback failed: {e}", flush=True)
             if not played:
                 try:
-                    sp.run(["aplay", "-D", _PLAYBACK_DEVICE, wav],
+                    sp.run(["aplay"] + (["-D", _PLAYBACK_DEVICE] if _PLAYBACK_DEVICE else []) + [wav],
                            capture_output=True, timeout=60)
                 except Exception as e2:
                     print(f"[nox] aplay also failed: {e2}", flush=True)
@@ -755,7 +760,7 @@ def cmd_sound(name):
                             except FileNotFoundError:
                                 continue
                     else:
-                        subprocess.run(["aplay", "-D", _PLAYBACK_DEVICE, path],
+                        subprocess.run(["aplay"] + (["-D", _PLAYBACK_DEVICE] if _PLAYBACK_DEVICE else []) + [path],
                                        capture_output=True, timeout=15)
                         played = True
                 except Exception as e2:
