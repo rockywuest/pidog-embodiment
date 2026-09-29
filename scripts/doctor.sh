@@ -237,11 +237,19 @@ if [[ $IS_BODY -eq 1 ]]; then
     else
       pass "playback cards: ${cards}"
       dev="${AUDIODEV:-$(grep -E '^AUDIODEV=' "$BODY_DIR/nox.env" 2>/dev/null | cut -d= -f2)}"
-      if [[ -n "$dev" ]]; then
+      if [[ -z "$dev" ]]; then
+        pass "no AUDIODEV set — sound uses the ALSA default (what SunFounder's tools use)"
+        if ! printf '%s\n' $cards | grep -qv 'vc4hdmi'; then
+          warn "every playback card looks like an HDMI output — is the robot_hat speaker enabled?"
+          hint "the PiDog speaker shows up as a Google voiceHAT card; check /boot/firmware/config.txt"
+        fi
+      elif [[ "$dev" == "auto" ]]; then
+        pass "AUDIODEV=auto — the daemon picks a speaker card and logs which"
+      else
         devcard="$(printf '%s' "$dev" | sed -n 's/.*hw:\([0-9]*\).*/\1/p')"
         if [[ -n "$devcard" ]] && ! printf '%s' "$cards" | grep -q "${devcard}:"; then
           fail "AUDIODEV=${dev} points at card ${devcard}, which does not exist"
-          hint "remove AUDIODEV from body/nox.env to use the detected card, or set an existing one"
+          hint "remove AUDIODEV from body/nox.env for the ALSA default, set AUDIODEV=auto, or name a card that exists"
         else
           pass "AUDIODEV=${dev} matches a present card"
         fi
