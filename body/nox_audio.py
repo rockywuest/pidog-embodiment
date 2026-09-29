@@ -82,19 +82,48 @@ def describe_cards(cards):
     return ", ".join(f"{c['index']}:{c['id']}" for c in cards) or "none"
 
 
+# Cards that are almost never the robot's speaker. HDMI in particular is picked
+# up by any auto-detection and is usually not even plugged in.
+UNLIKELY_SPEAKERS = ("vc4hdmi", "hdmi")
+# Names of boards that DO carry a robot speaker. The PiDog's robot_hat registers
+# as a Google voiceHAT sound card — the name that taught us this list is not a
+# guess we should make silently (issue #24).
+LIKELY_SPEAKERS = ("voicehat", "googlevoice", "robot", "hifiberry", "dac",
+                   "amp", "usb", "speaker", "headphone")
+
+
+def pick_card(cards):
+    """The card most likely to be the robot's speaker, or None."""
+    usable = [c for c in cards
+              if not any(k in c["id"].lower() for k in UNLIKELY_SPEAKERS)]
+    for keyword in LIKELY_SPEAKERS:
+        for card in usable:
+            if keyword in card["id"].lower():
+                return card
+    return usable[0] if usable else (cards[0] if cards else None)
+
+
 def resolve_device(requested=None, runner=None):
     """Decide which ALSA device to play to.
 
     Returns {"device": str|None, "usable": bool, "cards": [...], "reason": str}.
-    A device of None means "use the ALSA default", which is far better than a
-    guessed card that does not exist: the daemon used to fall back to
-    plughw:3,0 unconditionally, and on a robot without a card 3 that made the
-    SDK's mixer fail to initialise AND every playback silent (issue #24).
+    ``device`` None means "use the ALSA default", and that is the default
+    behaviour on purpose.
+
+    Two rounds of issue #24 were caused by this function's ancestors guessing:
+    first an unconditional fallback to plughw:3,0, which on a robot without a
+    card 3 silenced everything and broke the SDK's mixer; then an auto-pick that
+    chose card 0 — HDMI, unplugged — while the PiDog's speaker sat on card 2.
+    Meanwhile SunFounder's own examples worked, because they set no device at
+    all and let ALSA use the default the PiDog installer configured.
+
+    So: an explicit AUDIODEV is honoured when its card exists, AUDIODEV=auto
+    asks for the detection, and anything else leaves the default alone.
     """
     cards = list_playback_cards(runner)
     known = {c["index"] for c in cards} | {c["id"] for c in cards}
 
-    if requested:
+    if requested and str(requested).lower() != "auto":
         card = device_card(requested)
         if card is None or card in known or not cards:
             # Unparseable or unverifiable: respect an explicit setting.
@@ -109,13 +138,23 @@ def resolve_device(requested=None, runner=None):
         return {"device": None, "usable": False, "cards": cards,
                 "reason": "aplay lists no playback card — no sound is possible"}
 
-    # Prefer a DAC/amp/USB speaker over the SoC's own headphone/HDMI outputs.
-    preferred = next((c for c in cards
-                      if any(k in c["id"].lower()
-                             for k in ("hifiberry", "dac", "amp", "usb", "speaker"))), None)
-    chosen = preferred or cards[0]
-    return {"device": f"plughw:{chosen['index']},0", "usable": True, "cards": cards,
-            "reason": f"detected card {chosen['index']}:{chosen['id']}"}
+    if str(requested).lower() == "auto":
+        chosen = pick_card(cards)
+        hdmi_only = all(any(k in c["id"].lower() for k in UNLIKELY_SPEAKERS)
+                        for c in cards)
+        return {"device": f"plughw:{chosen['index']},0",
+                "usable": not hdmi_only,
+                "cards": cards,
+                "reason": (f"AUDIODEV=auto picked card {chosen['index']}:{chosen['id']}"
+                           + (" — but every card looks like an HDMI output, so this "
+                              "is probably not the robot's speaker" if hdmi_only else ""))}
+
+    # Nothing requested: the ALSA default is what SunFounder's own tools use, and
+    # on a working PiDog install it is already the speaker. Overriding it is how
+    # this went wrong twice.
+    return {"device": None, "usable": True, "cards": cards,
+            "reason": (f"ALSA default (cards: {describe_cards(cards)}; set AUDIODEV "
+                       "in body/nox.env to pin one, or AUDIODEV=auto to detect)")}
 
 
 class AplayMusic:

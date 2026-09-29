@@ -213,6 +213,22 @@ card 1: vc4hdmi [vc4-hdmi], device 0: MAI PCM i2s-hifi-0 [MAI PCM i2s-hifi-0]
   Subdevices: 1/1
 """
 
+# The reporter's actual robot: two HDMI outputs, and the PiDog's speaker on
+# card 2 as a Google voiceHAT card. Auto-detection picked card 0 and was mute.
+APLAY_PIDOG = """**** List of PLAYBACK Hardware Devices ****
+card 0: vc4hdmi0 [vc4-hdmi-0], device 0: MAI PCM i2s-hifi-0 [MAI PCM i2s-hifi-0]
+  Subdevices: 1/1
+card 1: vc4hdmi1 [vc4-hdmi-1], device 0: MAI PCM i2s-hifi-0 [MAI PCM i2s-hifi-0]
+  Subdevices: 1/1
+card 2: sndrpigooglevoi [snd_rpi_googlevoicehat_soundcar], device 0: Google voiceHAT SoundCard HiFi
+  Subdevices: 1/1
+"""
+
+APLAY_HDMI_ONLY = """**** List of PLAYBACK Hardware Devices ****
+card 0: vc4hdmi0 [vc4-hdmi-0], device 0: MAI PCM i2s-hifi-0 [MAI PCM i2s-hifi-0]
+  Subdevices: 1/1
+"""
+
 APLAY_WITH_DAC = APLAY_TWO_CARDS + """card 3: sndrpihifiberry [snd_rpi_hifiberry_dac], device 0: HifiBerry DAC HiFi
   Subdevices: 1/1
 """
@@ -238,19 +254,46 @@ def test_cards_are_parsed_from_aplay():
     assert cards[2]["id"] == "sndrpihifiberry"
 
 
-def test_a_dac_is_preferred_over_the_onboard_outputs():
+def test_nothing_requested_means_the_alsa_default():
+    """SunFounder's own tools set no device and work; overriding that default is
+    what silenced the robot twice (issue #24)."""
     from body.nox_audio import resolve_device
-    r = resolve_device(runner=AplayOutput(APLAY_WITH_DAC))
-    assert r["device"] == "plughw:3,0"
+    r = resolve_device(runner=AplayOutput(APLAY_PIDOG))
+    assert r["device"] is None
     assert r["usable"] is True
+    assert "ALSA default" in r["reason"]
+    assert "2:sndrpigooglevoi" in r["reason"], "must list the cards it saw"
+    assert "AUDIODEV" in r["reason"], "must say how to pin one"
+
+
+def test_auto_prefers_the_pidog_speaker_over_hdmi():
+    """The card list from the reporter's robot: the speaker is card 2, and the
+    previous auto-pick chose card 0 (HDMI, not even plugged in)."""
+    from body.nox_audio import resolve_device
+    r = resolve_device("auto", runner=AplayOutput(APLAY_PIDOG))
+    assert r["device"] == "plughw:2,0"
+    assert r["usable"] is True
+    assert "2:sndrpigooglevoi" in r["reason"]
+
+
+def test_auto_prefers_a_dac_over_the_onboard_outputs():
+    from body.nox_audio import resolve_device
+    r = resolve_device("auto", runner=AplayOutput(APLAY_WITH_DAC))
+    assert r["device"] == "plughw:3,0"
     assert "3:sndrpihifiberry" in r["reason"]
 
 
-def test_without_a_dac_the_first_card_is_used():
+def test_auto_says_so_when_only_hdmi_exists():
     from body.nox_audio import resolve_device
-    r = resolve_device(runner=AplayOutput(APLAY_TWO_CARDS))
-    assert r["device"] == "plughw:0,0"
-    assert r["usable"] is True
+    r = resolve_device("auto", runner=AplayOutput(APLAY_HDMI_ONLY))
+    assert r["usable"] is False
+    assert "probably not the robot's speaker" in r["reason"]
+
+
+def test_auto_skips_hdmi_for_the_headphone_jack():
+    from body.nox_audio import resolve_device
+    r = resolve_device("auto", runner=AplayOutput(APLAY_TWO_CARDS))
+    assert r["device"] == "plughw:0,0", "card 1 is HDMI"
 
 
 def test_a_configured_device_on_a_missing_card_is_refused():
@@ -280,7 +323,7 @@ def test_a_named_device_is_respected_unverified():
 
 def test_no_cards_at_all_is_reported():
     from body.nox_audio import resolve_device
-    r = resolve_device(runner=AplayOutput("**** List of PLAYBACK Hardware Devices ****\n"))
+    r = resolve_device("auto", runner=AplayOutput("**** List of PLAYBACK Hardware Devices ****\n"))
     assert r["device"] is None
     assert r["usable"] is False
     assert "no playback card" in r["reason"]
