@@ -802,6 +802,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # Brain sends response to voice query
             text = body.get("text", "")
             if text:
+                text, err = validate_text(text)
+                if err:
+                    self._bad_request(err)
+                    return
                 with perception.lock:
                     perception.voice_outbox.append({
                         "text": text,
@@ -841,6 +845,33 @@ class BridgeHandler(BaseHTTPRequestHandler):
             speak_text = body.get("speak", "")
             rgb = body.get("rgb", None)
             head = body.get("head", None)
+            # Check everything before moving anything: a bad value halfway
+            # through must not leave the dog with half a combo done.
+            if rgb:
+                if not isinstance(rgb, dict):
+                    self._bad_request("rgb must be an object like {\"r\": 255, \"g\": 0, \"b\": 0}")
+                    return
+                checked, err = validate_rgb(rgb.get("r", 128), rgb.get("g", 0),
+                                            rgb.get("b", 255), rgb.get("bps", 0.8))
+                if err:
+                    self._bad_request(err)
+                    return
+                rgb = dict(rgb, r=checked[0], g=checked[1], b=checked[2], bps=checked[3])
+            if head:
+                if not isinstance(head, dict):
+                    self._bad_request("head must be an object like {\"yaw\": 0, \"roll\": 0, \"pitch\": 0}")
+                    return
+                checked, err = validate_head(head.get("yaw", 0), head.get("roll", 0),
+                                             head.get("pitch", 0))
+                if err:
+                    self._bad_request(err)
+                    return
+                head = {"yaw": checked[0], "roll": checked[1], "pitch": checked[2]}
+            if speak_text:
+                speak_text, err = validate_text(speak_text)
+                if err:
+                    self._bad_request(err)
+                    return
             
             results = []
             
@@ -962,6 +993,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif path == "/expression":
             # Predefined emotion expressions (Sprint 4)
             expr_type = body.get("type", "")
+            speak_text = body.get("speak", "")
+            if speak_text:
+                speak_text, err = validate_text(speak_text)
+                if err:
+                    self._bad_request(err)
+                    return
             if expr_type not in EXPRESSION_MAP:
                 self._send_json({"error": f"unknown expression: {expr_type}", "valid": list(EXPRESSION_MAP.keys())}, 400)
             else:
@@ -986,8 +1023,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         args=({"cmd": "sound", "name": expr["sound"]},),
                         daemon=True
                     ).start()
-                # Speak (optional, from request body)
-                speak_text = body.get("speak", "")
+                # Speak (optional, from request body, checked above)
                 if speak_text:
                     threading.Thread(
                         target=send_to_daemon,
@@ -1009,6 +1045,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             direction = body.get("direction")
             angle = body.get("angle")
             tilt = body.get("tilt")
+            _, err = validate_head(0 if angle is None else angle, 0,
+                                   0 if tilt is None else tilt)
+            if err:
+                self._bad_request(err.replace("yaw", "angle").replace("pitch", "tilt"))
+                return
             if direction and direction in LOOK_DIRECTIONS:
                 target = dict(LOOK_DIRECTIONS[direction])
             elif angle is not None:

@@ -163,3 +163,29 @@ def test_body_client_sends_the_token(monkeypatch):
     assert seen["auth"] == "Bearer s3cret"
     nox_body_client.BodyClient("robot.local", 8888, token="").status()
     assert seen["auth"] is None
+
+
+@pytest.mark.parametrize("path,payload", [
+    ("/combo", {"rgb": {"r": 999}, "actions": ["sit"]}),
+    ("/combo", {"head": {"yaw": "left"}, "actions": ["sit"]}),
+    ("/combo", {"rgb": "red"}),
+    ("/combo", {"speak": "x" * 2000, "actions": ["sit"]}),
+    ("/expression", {"type": "happy", "speak": 42}),
+    ("/look_at", {"angle": "left"}),
+    ("/look_at", {"tilt": 1e9}),
+    ("/voice/respond", {"text": "x" * 2000}),
+])
+def test_every_path_to_servos_leds_and_speaker_is_checked(server_port, monkeypatch, path, payload):  # noqa: F811
+    sent = []
+    monkeypatch.setattr(bridge, "send_to_daemon", lambda p, timeout=30: sent.append(p) or {"ok": True})
+    status, body = post(server_port, path, payload)
+    assert status == 400 and body["ok"] is False
+    assert sent == []  # refused before anything moved
+
+
+def test_a_valid_look_at_still_moves_the_head(server_port, monkeypatch):  # noqa: F811
+    sent = []
+    monkeypatch.setattr(bridge, "send_to_daemon", lambda p, timeout=30: sent.append(p) or {"ok": True})
+    status, body = post(server_port, "/look_at", {"angle": 30, "tilt": -10})
+    assert status == 200
+    assert sent == [{"cmd": "head", "yaw": 30.0, "roll": 0, "pitch": -10.0}]
