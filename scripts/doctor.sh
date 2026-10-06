@@ -129,6 +129,14 @@ if [[ $IS_BODY -eq 1 ]]; then
   else
     warn "body/nox.env missing (install-body.sh creates it from the example)"
   fi
+  # issue #30: the bridge moves the robot; without a token anyone who can
+  # reach port 8888 can drive it.
+  if [[ -f "$BODY_DIR/nox.env" ]] && grep -qE '^[[:space:]]*NOX_API_TOKEN=.+' "$BODY_DIR/nox.env"; then
+    pass "bridge token auth on (NOX_API_TOKEN set)"
+  else
+    warn "bridge token auth off — anyone who can reach port ${BRIDGE_PORT} can drive the robot"
+    hint "set NOX_API_TOKEN in body/nox.env and on the brain; keep 8888 firewalled to LAN/VPN"
+  fi
 
   section "Body — services"
   check_service nox-body

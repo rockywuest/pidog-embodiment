@@ -38,6 +38,14 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nox_security import (BridgeSecurity, validate_head, validate_name,  # noqa: E402
+                          validate_rgb, validate_text)
+
+# Token auth (optional, NOX_API_TOKEN) + rate limiting for requests from other
+# machines; localhost stays open for the robot's own services (issue #30).
+security = BridgeSecurity()
+
 # ─── Configuration ───
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8888
@@ -373,10 +381,38 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
-    
+
+    def _refused(self):
+        """Answer 401/429 and return True when the request may not proceed."""
+        verdict = security.check(self.client_address[0], self.headers)
+        if verdict is None:
+            return False
+        status, error, extra = verdict
+        # Read the unread body first: closing on a client that is still sending
+        # turns the 401/429 into a connection reset on its side.
+        try:
+            length = min(int(self.headers.get("Content-Length", 0) or 0), 1 << 20)
+            if length > 0:
+                self.rfile.read(length)
+        except (ValueError, OSError):
+            pass
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        for name, value in extra.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(json.dumps({"ok": False, "error": error}).encode())
+        return True
+
+    def _bad_request(self, error):
+        self._send_json({"ok": False, "error": error}, 400)
+
     def do_GET(self):
+        if self._refused():
+            return
         path = self.path.split("?")[0]
         
         if path == "/status":
@@ -393,6 +429,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             }
             if _behavior_engine:
                 resp["behavior"] = _behavior_engine.get_state()
+            resp["security"] = security.status()
             # The daemon probes the robot_hat MCU on I2C (issue #12): when it
             # does not answer, every motion command is lost silently.
             i2c = sensors.get("i2c") or {}
@@ -619,6 +656,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"unknown path: {path}"}, 404)
     
     def do_POST(self):
+        if self._refused():
+            return
         path = self.path.split("?")[0]
         body = self._read_json()
         if "_json_error" in body:
@@ -670,6 +709,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             text = body.get("text", "")
             blocking = bool(body.get("blocking", False))
             if text:
+                text, err = validate_text(text)
+                if err:
+                    self._bad_request(err)
+                    return
                 r = send_to_daemon({"cmd": "speak", "text": text, "wait": blocking},
                                    timeout=90 if blocking else 10)
                 if isinstance(r, dict) and r.get("error") and "ok" not in r:
@@ -685,31 +728,45 @@ class BridgeHandler(BaseHTTPRequestHandler):
         
         elif path == "/rgb":
             # Set RGB LEDs
+            rgb, err = validate_rgb(body.get("r", 128), body.get("g", 0),
+                                    body.get("b", 255), body.get("bps", 0.8))
+            if err:
+                self._bad_request(err)
+                return
             r = send_to_daemon({
                 "cmd": "rgb",
-                "r": body.get("r", 128),
-                "g": body.get("g", 0),
-                "b": body.get("b", 255),
+                "r": rgb[0],
+                "g": rgb[1],
+                "b": rgb[2],
                 "mode": body.get("mode", "breath"),
-                "bps": body.get("bps", 0.8),
+                "bps": rgb[3],
             })
             self._send_json(r)
         
         elif path == "/head":
             # Move head
+            head, err = validate_head(body.get("yaw", 0), body.get("roll", 0),
+                                      body.get("pitch", 0))
+            if err:
+                self._bad_request(err)
+                return
             r = send_to_daemon({
                 "cmd": "head",
-                "yaw": body.get("yaw", 0),
-                "roll": body.get("roll", 0),
-                "pitch": body.get("pitch", 0),
+                "yaw": head[0],
+                "roll": head[1],
+                "pitch": head[2],
             })
             self._send_json(r)
         
         elif path == "/face/register":
-            # Register a face: take photo, detect, store embedding
-            name = body.get("name", "")
-            if not name:
+            # Register a face: take photo, detect, store embedding.
+            # The name ends up in a file name — "../x" must not escape the face DB.
+            if not body.get("name"):
                 self._send_json({"error": "name required"}, 400)
+                return
+            name, err = validate_name(body.get("name"))
+            if err:
+                self._bad_request(err)
                 return
 
             # Take photo
@@ -745,6 +802,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # Brain sends response to voice query
             text = body.get("text", "")
             if text:
+                text, err = validate_text(text)
+                if err:
+                    self._bad_request(err)
+                    return
                 with perception.lock:
                     perception.voice_outbox.append({
                         "text": text,
@@ -784,6 +845,33 @@ class BridgeHandler(BaseHTTPRequestHandler):
             speak_text = body.get("speak", "")
             rgb = body.get("rgb", None)
             head = body.get("head", None)
+            # Check everything before moving anything: a bad value halfway
+            # through must not leave the dog with half a combo done.
+            if rgb:
+                if not isinstance(rgb, dict):
+                    self._bad_request("rgb must be an object like {\"r\": 255, \"g\": 0, \"b\": 0}")
+                    return
+                checked, err = validate_rgb(rgb.get("r", 128), rgb.get("g", 0),
+                                            rgb.get("b", 255), rgb.get("bps", 0.8))
+                if err:
+                    self._bad_request(err)
+                    return
+                rgb = dict(rgb, r=checked[0], g=checked[1], b=checked[2], bps=checked[3])
+            if head:
+                if not isinstance(head, dict):
+                    self._bad_request("head must be an object like {\"yaw\": 0, \"roll\": 0, \"pitch\": 0}")
+                    return
+                checked, err = validate_head(head.get("yaw", 0), head.get("roll", 0),
+                                             head.get("pitch", 0))
+                if err:
+                    self._bad_request(err)
+                    return
+                head = {"yaw": checked[0], "roll": checked[1], "pitch": checked[2]}
+            if speak_text:
+                speak_text, err = validate_text(speak_text)
+                if err:
+                    self._bad_request(err)
+                    return
             
             results = []
             
@@ -905,6 +993,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif path == "/expression":
             # Predefined emotion expressions (Sprint 4)
             expr_type = body.get("type", "")
+            speak_text = body.get("speak", "")
+            if speak_text:
+                speak_text, err = validate_text(speak_text)
+                if err:
+                    self._bad_request(err)
+                    return
             if expr_type not in EXPRESSION_MAP:
                 self._send_json({"error": f"unknown expression: {expr_type}", "valid": list(EXPRESSION_MAP.keys())}, 400)
             else:
@@ -929,8 +1023,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         args=({"cmd": "sound", "name": expr["sound"]},),
                         daemon=True
                     ).start()
-                # Speak (optional, from request body)
-                speak_text = body.get("speak", "")
+                # Speak (optional, from request body, checked above)
                 if speak_text:
                     threading.Thread(
                         target=send_to_daemon,
@@ -952,6 +1045,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             direction = body.get("direction")
             angle = body.get("angle")
             tilt = body.get("tilt")
+            _, err = validate_head(0 if angle is None else angle, 0,
+                                   0 if tilt is None else tilt)
+            if err:
+                self._bad_request(err.replace("yaw", "angle").replace("pitch", "tilt"))
+                return
             if direction and direction in LOOK_DIRECTIONS:
                 target = dict(LOOK_DIRECTIONS[direction])
             elif angle is not None:

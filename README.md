@@ -535,7 +535,7 @@ The **Behavior Engine** is a 6-state FSM with mood system that runs independentl
 ### Built-in Reflexes (work without brain)
 - **Touch** → Pat on head triggers tail wag + happy LEDs
 - **Sound** → Head turns toward sound source
-- **Battery** → Warning at <6.8V, critical alert at <6.2V
+- **Battery** → Warning and rest below 6.8 V; below 6.2 V it lies down and stays down until charged
 - **Vision** → Patrol uses SmolVLM to detect people and obstacles
 - **Face tracking** → Head follows detected faces
 
@@ -557,22 +557,15 @@ curl -X POST http://your-robot.local:8888/behavior/stop
 **The bridge has no authentication.** Anyone who can reach port 8888 can walk
 the robot, take photos and play sounds. Treat it as a LAN-only service.
 
-This section used to claim token auth, rate limiting and input validation. The
-code for those exists in `shared/security.py` but is imported by nothing, so the
-claim was false. Tracked in #30 — either wired in or removed, not documented as
-present in the meantime.
-
-What is actually true today:
-
 | | Status |
 |---|---|
-| Bridge authentication | ❌ none — every request is served |
-| Rate limiting | ❌ none |
-| Input validation | ⚠️ partial: unknown actions and malformed JSON are rejected loudly; `/rgb`, `/head`, `/speak` pass values through |
+| Bridge authentication | ✅ optional: set `NOX_API_TOKEN` in `body/nox.env` and every request from another machine needs `Authorization: Bearer <token>`. Off by default so existing setups keep working. The robot's own services (localhost) are exempt; requests through a tunnel/proxy on the robot are not. `/status` → `security.auth` shows `on`/`off`. |
+| Rate limiting | ✅ 600 requests/minute per remote address (`NOX_RATE_LIMIT`, `0` = off), answered with `429` + `Retry-After` |
+| Input validation | ✅ unknown actions and malformed JSON are rejected loudly; `/rgb`, `/head`, `/speak` and `/face/register` check their values and answer `400` with the reason |
 | Secrets in code | ✅ none — everything comes from the environment, enforced by `tests/test_no_private_data.py` |
 | Telegram bot | ✅ refuses every command unless `TELEGRAM_ALLOWED_USERS` lists your user ID |
 
-Recommended setup until authentication exists:
+Recommended setup:
 
 ```bash
 # 1. Do not forward port 8888 from your router.
@@ -580,6 +573,8 @@ Recommended setup until authentication exists:
 sudo ufw allow from 192.168.0.0/16 to any port 8888 proto tcp
 sudo ufw allow from 100.64.0.0/10 to any port 8888 proto tcp   # Tailscale CGNAT
 # 3. Reach the robot from outside via VPN only — see docs/remote-access.md.
+# 4. Set a token on both sides (body/nox.env and /etc/default/nox-brain):
+#    NOX_API_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
 ```
 
 Ports in use: **8888 inbound on the body** (bridge), **8889 inbound on the
@@ -610,6 +605,7 @@ pidog-embodiment/
 │   ├── nox_i2c_diag.py            # I2C/MCU reachability diagnostics (issue #12)
 │   ├── nox_motion.py              # Draining the SDK's motion queue (issue #25)
 │   ├── nox_audio.py               # aplay fallback when the SDK has no sound (issue #24)
+│   ├── nox_security.py            # Bridge token auth, rate limit, input checks (issue #30)
 │   ├── adapters/                  # Hardware-specific adapters
 │   │   ├── pidog.py               # SunFounder PiDog
 │   │   └── picar.py               # Robot car (template)
@@ -619,9 +615,6 @@ pidog-embodiment/
 │       ├── nox-bridge.service     # REST API (HTTP 8888)
 │       ├── nox-vision.service     # Vision engine (SmolVLM)
 │       └── nox-voice.service      # Wake word + STT
-├── shared/                        # Shared utilities
-│   ├── config.py                  # Configuration management
-│   └── security.py                # Auth, rate limiting
 ├── models/                        # ONNX + GGUF models (gitignored)
 │   └── download_models.sh         # One-click model download
 ├── scripts/

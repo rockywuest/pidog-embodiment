@@ -37,6 +37,8 @@ if [[ ! -f /etc/default/nox-brain ]]; then
 
 # Where the robot body's bridge runs (127.0.0.1 if brain and body share one machine):
 #PIDOG_HOST=pidog.local
+# Same value as NOX_API_TOKEN in the robot's body/nox.env, if you set one there:
+#NOX_API_TOKEN=
 
 # LLM backend — any OpenAI-compatible chat-completions endpoint.
 # Cloud (OpenAI): set the key, keep the default URL/model:

@@ -47,6 +47,17 @@ BRIDGE_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
 BRIDGE_HOST_TS = os.environ.get("PIDOG_HOST_TS", "")
 BRIDGE_URL = f"http://{BRIDGE_HOST}:{BRIDGE_PORT}"
 BRIDGE_URL_TS = f"http://{BRIDGE_HOST_TS}:{BRIDGE_PORT}" if BRIDGE_HOST_TS else ""
+# Must match NOX_API_TOKEN in the robot's body/nox.env when that is set (issue #30).
+BRIDGE_TOKEN = os.environ.get("NOX_API_TOKEN", "").strip()
+
+
+def _bridge_request(url, data=None):
+    req = urllib.request.Request(url, data=data, method="POST" if data is not None else "GET")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    if BRIDGE_TOKEN:
+        req.add_header("Authorization", f"Bearer {BRIDGE_TOKEN}")
+    return req
 
 # Gateway that answers the conversational requests (same machine by default).
 GATEWAY_HOST = os.environ.get("CLAWDBOT_HOST", "127.0.0.1")
@@ -439,7 +450,7 @@ def bridge_get(path: str, timeout: float = 10) -> dict:
     
     url = f"{bridge_breaker.get_url()}{path}"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(_bridge_request(url), timeout=timeout) as resp:
             result = json.loads(resp.read().decode())
         bridge_breaker.record_success()
         return result
@@ -459,9 +470,7 @@ def bridge_post(path: str, data: dict, timeout: float = 15) -> dict:
     url = f"{bridge_breaker.get_url()}{path}"
     try:
         body = json.dumps(data).encode()
-        req = urllib.request.Request(url, data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(_bridge_request(url, body), timeout=timeout) as resp:
             result = json.loads(resp.read().decode())
         bridge_breaker.record_success()
         return result
