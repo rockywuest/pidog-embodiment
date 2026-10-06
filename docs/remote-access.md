@@ -58,6 +58,11 @@ cloudflared tunnel route dns pidog pidog.yourdomain.com
 cloudflared tunnel run pidog
 ```
 
+**Set `NOX_API_TOKEN` in `body/nox.env` first.** A tunnel makes the robot
+reachable from the internet; the bridge recognises tunnelled requests by their
+forwarding headers and asks them for the token — without one configured it
+would let them through.
+
 ## Option 4: Telegram Bot (Simplest)
 
 No VPN needed — control via Telegram messages.
@@ -82,10 +87,11 @@ For the best experience, use **Tailscale + Telegram**:
 
 ## Security Checklist
 
-The bridge has **no authentication** — see the security section in the README.
-Everything below is therefore about keeping it unreachable from outside.
+The bridge's token auth is **optional and off by default** — see the security
+section in the README. Keep it unreachable from outside, and set a token anyway.
 
 - [ ] Never forward port 8888 from your router
+- [ ] `NOX_API_TOKEN` set in `body/nox.env` and on the brain (required before any tunnel)
 - [ ] Firewall the bridge to your LAN and VPN range only
 - [ ] `TELEGRAM_ALLOWED_USERS` set to your user ID — without it the bot refuses
       every command (that is the intended default, not a failure)
