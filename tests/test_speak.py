@@ -175,3 +175,25 @@ def test_bridge_unreachable_daemon_is_not_ok(server_port, monkeypatch):  # noqa:
                         lambda payload, timeout=30: {"error": "[Errno 111] Connection refused"})
     body = _post(server_port, {"text": "Hallo"})
     assert body["ok"] is False
+
+
+def test_playback_holds_the_lock_but_synthesis_does_not(wav):
+    import threading
+    lock = threading.Lock()
+    seen = {}
+
+    class Piper(FakePiper):
+        def __call__(self, cmd, **kwargs):
+            seen["piper_locked"] = lock.locked()
+            return super().__call__(cmd, **kwargs)
+
+    class LockedMusic(Music):
+        def sound_play(self, path, volume=None):
+            seen["play_locked"] = lock.locked()
+            return True
+
+    r = speak_text("Hallo", "piper", "v.onnx", LockedMusic(), wav,
+                   runner=Piper(), log=Logger(), play_lock=lock)
+    assert r["ok"] is True
+    assert seen == {"piper_locked": False, "play_locked": True}
+    assert not lock.locked()

@@ -249,7 +249,8 @@ def _last_line(output):
     return lines[-1] if lines else "no error output"
 
 
-def speak_text(text, piper_bin, piper_model, music, wav_path, runner=None, log=None):
+def speak_text(text, piper_bin, piper_model, music, wav_path, runner=None, log=None,
+               play_lock=None):
     """Text → Piper → wav → ``music.sound_play``. Returns {"ok": bool, ...}.
 
     The daemon used to run this inline in a fire-and-forget thread: Piper's
@@ -258,6 +259,11 @@ def speak_text(text, piper_bin, piper_model, music, wav_path, runner=None, log=N
     /speak said ok:true while the dog stayed silent (issue #35). Every outcome
     is now returned AND logged, so both `"blocking": true` and journalctl tell
     the truth.
+
+    ``play_lock`` guards only the playback — the SDK's mixer is shared with
+    cmd_sound — never the synthesis, which can take seconds and would hold up
+    every movement. ``music.sound_play`` must block until the sound ends (the
+    SDK's does, and so does AplayMusic): the caller deletes the wav afterwards.
     """
     run = runner or subprocess.run
     log = log if log is not None else _default_log
@@ -284,7 +290,11 @@ def speak_text(text, piper_bin, piper_model, music, wav_path, runner=None, log=N
     if music is None:
         return fail("no sound engine and no aplay — nothing can play the speech")
     try:
-        played = music.sound_play(wav_path)
+        if play_lock is not None:
+            with play_lock:
+                played = music.sound_play(wav_path)
+        else:
+            played = music.sound_play(wav_path)
     except Exception as e:  # noqa: BLE001 - report it, the daemon must keep running
         return fail(f"playback raised {type(e).__name__}: {e}")
     # robot_hat's Music.sound_play returns None; only our AplayMusic says False.

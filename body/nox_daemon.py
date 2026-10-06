@@ -706,7 +706,7 @@ def cmd_speak(text, wait=False):
         wav = f"/tmp/nox_speak_{int(time.time()*1000) % 100000}.wav"
         music = getattr(dog, "music", None) or AplayMusic(device=_PLAYBACK_DEVICE)
         try:
-            result = speak_text(words, PIPER_BIN, PIPER_MODEL, music, wav)
+            result = speak_text(words, PIPER_BIN, PIPER_MODEL, music, wav, play_lock=dog_lock)
         finally:
             try:
                 os.remove(wav)
