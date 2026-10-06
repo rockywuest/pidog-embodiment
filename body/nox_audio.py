@@ -249,6 +249,67 @@ def _last_line(output):
     return lines[-1] if lines else "no error output"
 
 
+# Where piper voices live. Ours first, then SunFounder's: their examples
+# download into ~/.piper_models — and when run with sudo, into
+# /root/.piper_models, which the service user cannot read (issue #35).
+PIPER_VOICE_DIRS = (
+    "~/.local/share/piper-voices",
+    "~/.piper_models",
+    "/root/.piper_models",
+)
+PREFERRED_PIPER_VOICE = "de_DE-thorsten-high"
+
+
+def find_piper_voice(configured=None, dirs=PIPER_VOICE_DIRS, preferred=PREFERRED_PIPER_VOICE):
+    """Pick the voice /speak uses: {"model": path|None, "reason": str, "voices": [...]}.
+
+    An explicit PIPER_MODEL wins and is never second-guessed. Otherwise any
+    installed voice will do — the robot speaking in the wrong voice is a far
+    better first experience than "model not found" while SunFounder's own
+    examples talk fine on the same robot. A voice needs its .onnx.json too.
+    """
+    voices, locked = [], []
+    for d in dirs:
+        d = os.path.expanduser(d)
+        try:
+            names = sorted(os.listdir(d))
+        except PermissionError:
+            locked.append(d)
+            continue
+        except OSError:
+            continue
+        for name in names:
+            path = os.path.join(d, name)
+            if (name.endswith(".onnx") and os.path.isfile(path + ".json")
+                    and os.access(path, os.R_OK)):
+                voices.append(path)
+
+    if configured:
+        if os.path.isfile(configured):
+            return {"model": configured, "reason": "PIPER_MODEL from body/nox.env",
+                    "voices": voices}
+        return {"model": None, "voices": voices, "reason": (
+            f"PIPER_MODEL={configured} does not exist"
+            + (f" — installed voices: {', '.join(voices)}" if voices else "")
+            + ". Fix the path in body/nox.env, or remove the line to pick one automatically")}
+
+    if voices:
+        chosen = next((v for v in voices if os.path.basename(v) == preferred + ".onnx"),
+                      voices[0])
+        return {"model": chosen, "voices": voices,
+                "reason": f"found {os.path.basename(chosen)} in {os.path.dirname(chosen)}"}
+
+    hint = ("no piper voice found in " + ", ".join(os.path.expanduser(d) for d in dirs)
+            + ". Download one (both .onnx and .onnx.json) from "
+            "https://huggingface.co/rhasspy/piper-voices into ~/.local/share/piper-voices/")
+    if any(d.startswith("/root") for d in locked):
+        hint = ("no readable piper voice. SunFounder's examples run with sudo keep "
+                "theirs in /root/.piper_models, which this service cannot read — copy "
+                "them: sudo cp -r /root/.piper_models ~/ && sudo chown -R $USER: "
+                "~/.piper_models — or " + hint[0].lower() + hint[1:])
+    return {"model": None, "voices": [], "reason": hint}
+
+
 def speak_text(text, piper_bin, piper_model, music, wav_path, runner=None, log=None,
                play_lock=None):
     """Text → Piper → wav → ``music.sound_play``. Returns {"ok": bool, ...}.

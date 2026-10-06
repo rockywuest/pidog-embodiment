@@ -197,3 +197,68 @@ def test_playback_holds_the_lock_but_synthesis_does_not(wav):
     assert r["ok"] is True
     assert seen == {"piper_locked": False, "play_locked": True}
     assert not lock.locked()
+
+
+# ─── which voice: the reporter's robot spoke through SunFounder's examples,
+# but /speak only ever looked for one German voice in one folder (issue #35) ───
+
+from body.nox_audio import find_piper_voice  # noqa: E402
+
+
+def make_voice(folder, name):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.onnx").write_bytes(b"onnx")
+    (folder / f"{name}.onnx.json").write_text("{}")
+    return str(folder / f"{name}.onnx")
+
+
+def test_sunfounders_voice_folder_is_found(tmp_path):
+    ours, theirs = tmp_path / "piper-voices", tmp_path / ".piper_models"
+    amy = make_voice(theirs, "en_US-amy-low")
+    v = find_piper_voice(dirs=[str(ours), str(theirs)])
+    assert v["model"] == amy
+    assert ".piper_models" in v["reason"]
+
+
+def test_the_preferred_voice_wins_over_others(tmp_path):
+    make_voice(tmp_path / "a", "en_US-amy-low")
+    thorsten = make_voice(tmp_path / "b", "de_DE-thorsten-high")
+    v = find_piper_voice(dirs=[str(tmp_path / "a"), str(tmp_path / "b")])
+    assert v["model"] == thorsten
+
+
+def test_a_voice_without_its_json_is_skipped(tmp_path):
+    d = tmp_path / "voices"
+    d.mkdir()
+    (d / "broken.onnx").write_bytes(b"onnx")
+    v = find_piper_voice(dirs=[str(d)])
+    assert v["model"] is None
+    assert "huggingface.co/rhasspy/piper-voices" in v["reason"]
+
+
+def test_an_explicit_piper_model_is_used(tmp_path):
+    make_voice(tmp_path / "v", "en_US-amy-low")
+    siwis = make_voice(tmp_path / "elsewhere", "fr_FR-siwis-medium")
+    v = find_piper_voice(siwis, dirs=[str(tmp_path / "v")])
+    assert v["model"] == siwis
+
+
+def test_a_wrong_piper_model_is_not_silently_replaced(tmp_path):
+    amy = make_voice(tmp_path / "v", "en_US-amy-low")
+    v = find_piper_voice("/nope/fr.onnx", dirs=[str(tmp_path / "v")])
+    assert v["model"] is None
+    assert "/nope/fr.onnx" in v["reason"] and amy in v["reason"]
+
+
+def test_voices_locked_in_root_say_how_to_copy_them(monkeypatch):
+    real_listdir = __import__("os").listdir
+
+    def listdir(path):
+        if path.startswith("/root"):
+            raise PermissionError(13, "Permission denied", path)
+        return real_listdir(path)
+
+    monkeypatch.setattr("body.nox_audio.os.listdir", listdir)
+    v = find_piper_voice(dirs=["/nonexistent/voices", "/root/.piper_models"])
+    assert v["model"] is None
+    assert "sudo cp -r /root/.piper_models" in v["reason"]
