@@ -310,10 +310,15 @@ curl -X POST http://your-robot.local:8888/action \
   -H "Content-Type: application/json" \
   -d '{"action": "sit"}'
 
-# Make it speak
+# Make it speak (answers at once, speaks in the background)
 curl -X POST http://your-robot.local:8888/speak \
   -H "Content-Type: application/json" \
   -d '{"text": "Hallo! Ich bin online!"}'
+
+# Silent? Wait for the speech and get the real outcome (piper or player error)
+curl -X POST http://your-robot.local:8888/speak \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hallo!", "blocking": true}'
 
 # Voice command (simulated)
 curl -X POST http://your-robot.local:8888/voice/input \
@@ -342,7 +347,7 @@ curl http://your-robot.local:8888/photo -o snap.jpg
 | GET | `/photo` | Capture and return camera image |
 | GET | `/look` | Photo + face detection + scene analysis |
 | GET | `/vision` | Latest local vision result (SmolVLM, if installed) |
-| POST | `/speak` | Text-to-Speech (async) |
+| POST | `/speak` | Text-to-Speech (async; `"blocking": true` waits and reports failures; last result in `/status` → `sensors.last_speak`) |
 | POST | `/action` | Execute movement: `{"action": "sit"}` |
 | POST | `/expression` | Coordinated emotion: action + RGB + head + sound |
 | POST | `/combo` | Combined action: actions + speak + RGB + head |
