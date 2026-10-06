@@ -578,10 +578,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 with open(VISION_RESULT_FILE, "r") as vf:
                     vision_data = json.load(vf)
                 vision_data["age_s"] = round(time.time() - vision_data.get("ts", 0), 1)
-                vision_data["ok"] = True
+                # A result can carry the service's own error (setup, camera) —
+                # that is not ok, even though the file exists.
+                vision_data["ok"] = not vision_data.get("error")
                 self._send_json(vision_data)
             except FileNotFoundError:
-                self._send_json({"ok": False, "error": "vision not running (no result file)"}, 503)
+                # Downloading the models is not enough — the nox-vision service
+                # has to run, and it is not installed by default (issue #36).
+                self._send_json({"ok": False, "error": (
+                    "vision not running (no result file) — start the service: "
+                    "sudo ./scripts/install-body.sh nox-vision, then check "
+                    "journalctl -u nox-vision -n 30 --no-pager. The first result "
+                    "takes about a minute.")}, 503)
             except Exception as e:
                 self._send_json({"ok": False, "error": f"vision read error: {e}"}, 500)
 

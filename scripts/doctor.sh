@@ -274,10 +274,23 @@ if [[ $IS_BODY -eq 1 ]]; then
     have cmake || hint "prerequisite missing: sudo apt install -y cmake build-essential"
     hint "see the 'Local Vision' section in the README"
   fi
-  if [[ -f "$HOME/models/smolvlm/SmolVLM-256M-Instruct-Q8_0.gguf" ]]; then
-    pass "SmolVLM model present"
-  else
-    warn "SmolVLM model not downloaded — vision disabled"
+  vision_ready=1
+  for f in SmolVLM-256M-Instruct-Q8_0.gguf mmproj-SmolVLM-256M-Instruct-Q8_0.gguf; do
+    if [[ -s "$HOME/models/smolvlm/$f" ]]; then
+      pass "$f present"
+    else
+      vision_ready=0
+      warn "$f missing — vision disabled"
+    fi
+  done
+  # Models alone do nothing: the nox-vision service has to run (issue #36).
+  if [[ $vision_ready -eq 1 ]]; then
+    if [[ -f /etc/systemd/system/nox-vision.service ]]; then
+      check_service nox-vision
+    else
+      warn "models ready but the nox-vision service is not installed — /vision stays empty"
+      hint "sudo ./scripts/install-body.sh nox-vision"
+    fi
   fi
 fi
 

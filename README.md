@@ -464,14 +464,22 @@ cd ~ && git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
 cd llama.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NEON=ON
 cmake --build build --config Release -j2
 
-# Download models (279 MB total)
+# Download models (279 MB total; -c resumes instead of saving a second copy as .gguf.1)
 mkdir -p ~/models/smolvlm && cd ~/models/smolvlm
-wget https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/SmolVLM-256M-Instruct-Q8_0.gguf
-wget https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf
+wget -c https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/SmolVLM-256M-Instruct-Q8_0.gguf
+wget -c https://huggingface.co/ggml-org/SmolVLM-256M-Instruct-GGUF/resolve/main/mmproj-SmolVLM-256M-Instruct-Q8_0.gguf
 
-# Check what PiDog sees
+# Start the vision service — it is not part of the default install
+cd ~/pidog-embodiment && sudo ./scripts/install-body.sh nox-vision
+journalctl -u nox-vision -n 20 --no-pager   # expect "[vision] Setup OK"
+
+# About a minute later: check what PiDog sees
 curl -s http://your-robot.local:8888/vision | python3 -m json.tool
 ```
+
+`"vision not running (no result file)"` means the service never wrote a result —
+it is not installed or not running. Any other `error` in the answer is the
+service's own reason (missing model, camera, llama.cpp).
 
 **Performance on Pi 4 (2GB RAM):**
 | Metric | Value |
