@@ -189,7 +189,7 @@ def write_result(description, prompt_type, inference_s, error=None):
 # ─── Main Loop ───────────────────────────────────────────────────────────────
 
 def verify_setup():
-    """Check that model files and binary exist."""
+    """Check that model files and binary exist. Returns None, or what is missing."""
     global llama_bin
 
     # Find llama binary
@@ -199,30 +199,33 @@ def verify_setup():
             break
 
     if not llama_bin:
-        print(f"[vision] ERROR: No llama binary found. Tried: {_LLAMA_BINS}", flush=True)
-        return False
+        return (f"no llama.cpp binary found (tried {', '.join(_LLAMA_BINS)}) — "
+                "build llama.cpp, see 'Local Vision' in the README")
 
     if not os.path.isfile(MODEL_PATH):
-        print(f"[vision] ERROR: Model not found: {MODEL_PATH}", flush=True)
-        return False
+        return f"model not found: {MODEL_PATH}"
 
     if not os.path.isfile(MMPROJ_PATH):
-        print(f"[vision] ERROR: Projector not found: {MMPROJ_PATH}", flush=True)
-        return False
+        return f"projector not found: {MMPROJ_PATH}"
 
     print(f"[vision] Setup OK:", flush=True)
     print(f"  Binary:    {llama_bin}", flush=True)
     print(f"  Model:     {MODEL_PATH}", flush=True)
     print(f"  Projector: {MMPROJ_PATH}", flush=True)
     print(f"  Interval:  {INTERVAL}s", flush=True)
-    return True
+    return None
 
 
 def main():
     """Main vision loop."""
     print(f"[vision] Nox Vision Engine starting...", flush=True)
 
-    if not verify_setup():
+    problem = verify_setup()
+    if problem:
+        # Leave the reason where /vision reads it — otherwise the API can only
+        # say "no result file", whatever actually went wrong (issue #36).
+        print(f"[vision] ERROR: {problem}", flush=True)
+        write_result(None, "setup", None, error=problem)
         print("[vision] Setup failed, exiting.", flush=True)
         sys.exit(1)
 
