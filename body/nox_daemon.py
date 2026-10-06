@@ -28,7 +28,8 @@ os.environ["SDL_AUDIODRIVER"] = "alsa"
 # Now: honour an explicit AUDIODEV when its card really exists, otherwise pick a
 # detected card, otherwise leave AUDIODEV unset and let ALSA use its default.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nox_audio import AplayMusic, describe_cards, resolve_device, speak_text  # noqa: E402
+from nox_audio import (AplayMusic, describe_cards, find_piper_voice,  # noqa: E402
+                       resolve_device, speak_text)
 
 _audio_device = resolve_device(os.environ.get("AUDIODEV"))
 _PLAYBACK_DEVICE = _audio_device["device"]
@@ -53,7 +54,11 @@ def _find_piper():
     return shutil.which("piper") or local
 
 PIPER_BIN = os.environ.get("PIPER_BIN") or _find_piper()
-PIPER_MODEL = os.environ.get("PIPER_MODEL") or os.path.expanduser("~/.local/share/piper-voices/de_DE-thorsten-high.onnx")
+# Unset PIPER_MODEL means "any installed voice" — looked up again on every
+# /speak, so a voice downloaded later works without a restart (issue #35).
+PIPER_MODEL = os.environ.get("PIPER_MODEL") or None
+_voice = find_piper_voice(PIPER_MODEL)
+print(f"[nox] Piper voice: {_voice['model'] or 'NONE'} ({_voice['reason']})", flush=True)
 SOUNDS_DIR = os.path.expanduser("~/pidog/sounds")
 
 # ─── Ultrasonic distance sensor (separate from PiDog to avoid Process hang) ───
@@ -689,15 +694,13 @@ def cmd_speak(text, wait=False):
         return {"ok": False, "error": "empty text"}
     # Fail loudly instead of returning ok while the async pipeline dies (issue #5):
     # piper voice models are NOT installed by pip — the user must download one.
-    if not os.path.exists(PIPER_MODEL):
-        return {"ok": False, "error": (
-            f"piper voice model not found: {PIPER_MODEL} — download a voice from "
-            "https://huggingface.co/rhasspy/piper-voices and set PIPER_MODEL in nox.env"
-        )}
+    voice = find_piper_voice(PIPER_MODEL)
+    if not voice["model"]:
+        return {"ok": False, "error": f"piper voice model not found: {voice['reason']}"}
     if not os.path.exists(PIPER_BIN):
         return {"ok": False, "error": (
             f"piper binary not found: {PIPER_BIN} — pip3 install piper-tts, "
-            "or set PIPER_BIN in nox.env"
+            "or set PIPER_BIN in body/nox.env"
         )}
 
     def _tts_pipeline(words):
@@ -706,7 +709,7 @@ def cmd_speak(text, wait=False):
         wav = f"/tmp/nox_speak_{int(time.time()*1000) % 100000}.wav"
         music = getattr(dog, "music", None) or AplayMusic(device=_PLAYBACK_DEVICE)
         try:
-            result = speak_text(words, PIPER_BIN, PIPER_MODEL, music, wav, play_lock=dog_lock)
+            result = speak_text(words, PIPER_BIN, voice["model"], music, wav, play_lock=dog_lock)
         finally:
             try:
                 os.remove(wav)
