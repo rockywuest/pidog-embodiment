@@ -27,6 +27,17 @@ from socketserver import ThreadingMixIn
 PIDOG_HOST = os.environ.get("PIDOG_HOST", "pidog.local")
 BRIDGE_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
 BASE_URL = f"http://{PIDOG_HOST}:{BRIDGE_PORT}"
+# Must match NOX_API_TOKEN in the robot's body/nox.env when that is set (issue #30).
+API_TOKEN = os.environ.get("NOX_API_TOKEN", "").strip()
+
+
+def _bridge_request(url, data=None):
+    req = urllib.request.Request(url, data=data, method="POST" if data is not None else "GET")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    if API_TOKEN:
+        req.add_header("Authorization", f"Bearer {API_TOKEN}")
+    return req
 
 # Who the robot belongs to — from the environment, never from source: real names
 # (children's especially) do not belong in a public repository.
@@ -142,7 +153,7 @@ SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{HOUSEHOLD_LINE}", HOUSEHOLD_LINE)
 def bridge_get(path, timeout=10):
     try:
         url = f"{BASE_URL}{path}"
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(_bridge_request(url), timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
         return {"error": str(e)}
@@ -152,9 +163,7 @@ def bridge_post(path, data, timeout=15):
     try:
         url = f"{BASE_URL}{path}"
         body = json.dumps(data).encode()
-        req = urllib.request.Request(url, data=body, method="POST")
-        req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(_bridge_request(url, body), timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
         return {"error": str(e)}

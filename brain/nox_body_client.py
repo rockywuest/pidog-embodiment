@@ -26,6 +26,14 @@ BRIDGE_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
 DAEMON_PORT = int(os.environ.get("PIDOG_DAEMON_PORT", "9999"))
 BASE_URL = f"http://{PIDOG_HOST}:{BRIDGE_PORT}"
 TIMEOUT = 30
+# Must match NOX_API_TOKEN in the robot's body/nox.env when that is set (issue #30).
+API_TOKEN = os.environ.get("NOX_API_TOKEN", "").strip()
+
+
+def _authorize(req, token):
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    return req
 
 
 def _request(method, path, data=None, timeout=TIMEOUT):
@@ -38,6 +46,7 @@ def _request(method, path, data=None, timeout=TIMEOUT):
         req.add_header("Content-Type", "application/json")
     else:
         req = urllib.request.Request(url, method=method)
+    _authorize(req, API_TOKEN)
     
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -313,11 +322,12 @@ class BodyClient:
         dog.speak("Hallo!")
     """
 
-    def __init__(self, host=None, port=None, timeout=TIMEOUT):
+    def __init__(self, host=None, port=None, timeout=TIMEOUT, token=None):
         self.host = host or PIDOG_HOST
         self.port = int(port or BRIDGE_PORT)
         self.base_url = f"http://{self.host}:{self.port}"
         self.timeout = timeout
+        self.token = API_TOKEN if token is None else token
 
     def _request(self, method, path, data=None, timeout=None):
         url = f"{self.base_url}{path}"
@@ -326,6 +336,7 @@ class BodyClient:
             req.add_header("Content-Type", "application/json")
         else:
             req = urllib.request.Request(url, method=method)
+        _authorize(req, self.token)
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 return json.loads(resp.read().decode())

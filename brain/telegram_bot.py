@@ -36,6 +36,17 @@ ALLOWED_USERS = [u.strip() for u in ALLOWED_USERS if u.strip()]
 BODY_HOST = os.environ.get("PIDOG_HOST", "pidog.local")
 BODY_PORT = int(os.environ.get("PIDOG_BRIDGE_PORT", "8888"))
 BODY_URL = f"http://{BODY_HOST}:{BODY_PORT}"
+# Must match NOX_API_TOKEN in the robot's body/nox.env when that is set (issue #30).
+API_TOKEN = os.environ.get("NOX_API_TOKEN", "").strip()
+
+
+def _bridge_request(url, data=None):
+    req = urllib.request.Request(url, data=data, method="POST" if data is not None else "GET")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    if API_TOKEN:
+        req.add_header("Authorization", f"Bearer {API_TOKEN}")
+    return req
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POLL_TIMEOUT = 30
@@ -103,7 +114,7 @@ def bridge_get(path, timeout=15):
     """GET request to body bridge."""
     try:
         url = f"{BODY_URL}{path}"
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(_bridge_request(url), timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
         return {"error": str(e)}
@@ -114,9 +125,7 @@ def bridge_post(path, data, timeout=15):
     try:
         url = f"{BODY_URL}{path}"
         body = json.dumps(data).encode()
-        req = urllib.request.Request(url, data=body)
-        req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(_bridge_request(url, body), timeout=timeout) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
         return {"error": str(e)}

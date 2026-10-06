@@ -72,6 +72,7 @@ def test_get_state_reports_the_flag_separately_from_low_battery(missing):
     engine.state = BehaviorState.IDLE
     engine.mood = _Mood()
     engine.low_battery_mode = False
+    engine.critical_battery_mode = False
     engine.servo_power_missing = missing
     engine._patrol_enabled = True
     engine.obstacles = _Obstacles()
@@ -81,3 +82,52 @@ def test_get_state_reports_the_flag_separately_from_low_battery(missing):
     assert state["servo_power_missing"] is missing
     # A missing pack is never a *weak* pack: the two must not be merged.
     assert state["low_battery"] is False
+
+
+# ─── the critical stage the README promised (issue #30) ───
+
+def _battery_engine():
+    from body.nox_behavior_engine import BehaviorEngine
+    engine = BehaviorEngine.__new__(BehaviorEngine)
+    engine.low_battery_mode = False
+    engine.critical_battery_mode = False
+    engine.sent, engine.transitions = [], []
+    engine.daemon = engine.sent.append
+    engine._request_transition = engine.transitions.append
+    return engine
+
+
+def test_low_battery_warns_and_rests_once():
+    e = _battery_engine()
+    e._on_battery(6.7)
+    e._on_battery(6.7)
+    assert e.low_battery_mode and not e.critical_battery_mode
+    assert [c["cmd"] for c in e.sent] == ["speak", "rgb"]
+
+
+def test_critical_battery_lies_down():
+    e = _battery_engine()
+    e._on_battery(6.7)
+    e._on_battery(6.1)
+    assert e.critical_battery_mode
+    assert {"cmd": "move", "action": "lie", "_internal": True} in e.sent
+    e.sent.clear()
+    e._on_battery(6.1)
+    assert e.sent == []  # no alarm every two seconds
+
+
+def test_critical_jumps_straight_from_full():
+    e = _battery_engine()
+    e._on_battery(6.0)
+    assert e.critical_battery_mode and e.low_battery_mode
+
+
+def test_battery_modes_clear_with_hysteresis():
+    e = _battery_engine()
+    e._on_battery(6.0)
+    e._on_battery(6.5)  # still within hysteresis of the critical level
+    assert e.critical_battery_mode
+    e._on_battery(6.7)
+    assert not e.critical_battery_mode and e.low_battery_mode
+    e._on_battery(7.3)
+    assert not e.low_battery_mode

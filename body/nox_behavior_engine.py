@@ -44,6 +44,8 @@ except ImportError:
 
 # ─── FSM States ───────────────────────────────────────────────────────────────
 
+BATTERY_LOW_V = 6.8       # warn and rest
+BATTERY_CRITICAL_V = 6.2  # lie down and stay down
 BATTERY_ABSENT_V = 1.0   # at or below this the rail carries no pack
 BATTERY_ASSUMED_V = 8.4  # stand-in charge level when the real one is unknown
 
@@ -374,6 +376,7 @@ class BehaviorEngine:
 
         # Battery
         self.low_battery_mode = False
+        self.critical_battery_mode = False
         # A reading at/below this is not a weak battery — it is no battery:
         # pack unplugged or power switch off. The Pi can run from USB-C alone,
         # so everything else keeps working while the servos get no power.
@@ -453,6 +456,32 @@ class BehaviorEngine:
             return {"ok": False, "error": f"Unknown state: {state_name}",
                     "valid": [s.value for s in BehaviorState]}
 
+    def _on_battery(self, batt_v):
+        """Low (<6.8 V): warn and rest. Critical (<6.2 V): lie down and stay.
+
+        The README promised the critical stage long before it existed (#30).
+        Lying down matters: a pack sagging under load browns out the servos
+        mid-step, and a dog that drops from standing can fall over.
+        Hysteresis on both levels so a reading wobbling around the threshold
+        does not repeat the alarm every two seconds.
+        """
+        if batt_v < BATTERY_CRITICAL_V and not self.critical_battery_mode:
+            self.critical_battery_mode = True
+            self.low_battery_mode = True
+            self.daemon({"cmd": "speak", "text": "Batterie kritisch. Ich lege mich hin."})
+            self.daemon({"cmd": "move", "action": "lie", "_internal": True})
+            self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "breath", "bps": 0.3})
+            self._request_transition(BehaviorState.REST)
+        elif batt_v < BATTERY_LOW_V and not self.low_battery_mode:
+            self.low_battery_mode = True
+            self.daemon({"cmd": "speak", "text": "Meine Batterie wird schwach."})
+            self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
+            self._request_transition(BehaviorState.REST)
+        if batt_v > BATTERY_CRITICAL_V + 0.4:
+            self.critical_battery_mode = False
+        if batt_v > BATTERY_LOW_V + 0.4:
+            self.low_battery_mode = False
+
     def get_state(self):
         """Return current engine state for API."""
         return {
@@ -460,6 +489,7 @@ class BehaviorEngine:
             "mood": self.mood.as_dict(),
             "dominant_mood": self.mood.dominant_mood(),
             "low_battery": self.low_battery_mode,
+            "critical_battery": self.critical_battery_mode,
             "servo_power_missing": self.servo_power_missing,
             "patrol_enabled": self._patrol_enabled,
             "obstacles": {
@@ -535,13 +565,7 @@ class BehaviorEngine:
                     result.get("battery_v"))
                 self.mood.battery_level = max(0, min(1.0, (batt_v - 6.0) / 2.4))
 
-                if batt_v < 6.8 and not self.low_battery_mode:
-                    self.low_battery_mode = True
-                    self.daemon({"cmd": "speak", "text": "Meine Batterie wird schwach."})
-                    self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
-                    self._request_transition(BehaviorState.REST)
-                elif batt_v > 7.2:
-                    self.low_battery_mode = False
+                self._on_battery(batt_v)
 
                 self.mood.update(2.0)
                 time.sleep(2)
