@@ -209,13 +209,28 @@ if [[ $IS_BODY -eq 1 ]]; then
     warn "piper binary not found — /speak will report an error"
     hint "pip3 install piper-tts (or set PIPER_BIN in body/nox.env)"
   fi
-  piper_model="${PIPER_MODEL:-$HOME/.local/share/piper-voices/de_DE-thorsten-high.onnx}"
-  if [[ -f "$piper_model" ]]; then
-    pass "piper voice model present ($(basename "$piper_model"))"
+  # Same lookup the daemon does: PIPER_MODEL from body/nox.env if set, otherwise
+  # any installed voice, SunFounder's ~/.piper_models included (issue #35).
+  piper_model="${PIPER_MODEL:-}"
+  if [[ -z "$piper_model" && -f "$BODY_DIR/nox.env" ]]; then
+    piper_model="$(sed -n 's/^[[:space:]]*PIPER_MODEL=//p' "$BODY_DIR/nox.env" | tail -1)"
+  fi
+  voice="$(python3 - "$BODY_DIR" "$piper_model" <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, sys.argv[1])
+from nox_audio import find_piper_voice
+v = find_piper_voice(sys.argv[2] or None)
+print(v["model"] or "")
+print(v["reason"])
+PY
+)"
+  voice_model="$(printf '%s\n' "$voice" | sed -n 1p)"
+  voice_reason="$(printf '%s\n' "$voice" | sed -n 2p)"
+  if [[ -n "$voice_model" ]]; then
+    pass "piper voice: $(basename "$voice_model") ($voice_reason)"
   else
-    warn "no piper voice model at $piper_model"
-    hint "download one from https://huggingface.co/rhasspy/piper-voices"
-    hint "then set PIPER_MODEL in body/nox.env"
+    warn "no usable piper voice — /speak will report an error"
+    hint "${voice_reason:-download one from https://huggingface.co/rhasspy/piper-voices}"
   fi
 
   # issue #24: SunFounder's sounds are .mp3 and aplay cannot play those. Without

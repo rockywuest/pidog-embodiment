@@ -329,6 +329,16 @@ curl -X POST http://your-robot.local:8888/voice/input \
 curl http://your-robot.local:8888/photo -o snap.jpg
 ```
 
+**Voice for `/speak`:** pip installs piper, but no voice. The daemon uses any
+installed one — `de_DE-thorsten-high` if present, otherwise the first voice in
+`~/.local/share/piper-voices` or `~/.piper_models` (where SunFounder's examples
+download theirs). A voice is a pair, `<name>.onnx` + `<name>.onnx.json`, from
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). To pick
+one, set `PIPER_MODEL=/full/path/to/voice.onnx` in `body/nox.env`. If you ran
+SunFounder's examples with `sudo`, their voices sit in `/root/.piper_models`,
+out of the service's reach: `sudo cp -r /root/.piper_models ~/ && sudo chown -R $USER: ~/.piper_models`.
+`./scripts/doctor.sh` shows which voice is used.
+
 > **Shell quoting matters:** wrap the JSON in **single quotes** and use
 > **double quotes** inside it, exactly as above. With the quotes swapped the
 > shell mangles the JSON before curl ever sends it — the bridge then answers
