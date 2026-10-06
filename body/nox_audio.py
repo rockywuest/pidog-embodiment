@@ -203,7 +203,13 @@ class AplayMusic:
         errors = []
         for cmd in self._command(path):
             try:
-                self._run(cmd, capture_output=True, timeout=self.timeout)
+                proc = self._run(cmd, capture_output=True, timeout=self.timeout)
+                # A player that runs and exits non-zero (wrong device, busy card,
+                # unreadable file) played nothing — try the next one (issue #35).
+                code = getattr(proc, "returncode", 0)
+                if code:
+                    errors.append(f"{cmd[0]} exited {code}: {_last_line(getattr(proc, 'stderr', ''))}")
+                    continue
                 return True
             except FileNotFoundError:
                 errors.append(f"{cmd[0]} not installed")
@@ -233,6 +239,69 @@ class AplayMusic:
 
 def _default_log(message):
     print(message, flush=True)
+
+
+def _last_line(output):
+    """The last non-empty line of a tool's stderr — usually the actual reason."""
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", "replace")
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    return lines[-1] if lines else "no error output"
+
+
+def speak_text(text, piper_bin, piper_model, music, wav_path, runner=None, log=None,
+               play_lock=None):
+    """Text → Piper → wav → ``music.sound_play``. Returns {"ok": bool, ...}.
+
+    The daemon used to run this inline in a fire-and-forget thread: Piper's
+    stderr went to the log only on a non-zero exit, a failed player was counted
+    as played, and the bridge never even waited for the daemon's answer — so
+    /speak said ok:true while the dog stayed silent (issue #35). Every outcome
+    is now returned AND logged, so both `"blocking": true` and journalctl tell
+    the truth.
+
+    ``play_lock`` guards only the playback — the SDK's mixer is shared with
+    cmd_sound — never the synthesis, which can take seconds and would hold up
+    every movement. ``music.sound_play`` must block until the sound ends (the
+    SDK's does, and so does AplayMusic): the caller deletes the wav afterwards.
+    """
+    run = runner or subprocess.run
+    log = log if log is not None else _default_log
+
+    def fail(error):
+        log(f"[nox] speak failed — {error}")
+        return {"ok": False, "error": error}
+
+    try:
+        # Text goes in on stdin, not through a shell: no quoting to get wrong.
+        proc = run([piper_bin, "--model", piper_model, "--output_file", wav_path],
+                   input=text, capture_output=True, text=True, timeout=60)
+    except FileNotFoundError:
+        return fail(f"piper not found: {piper_bin} — pip3 install piper-tts, "
+                    "or set PIPER_BIN in body/nox.env")
+    except subprocess.TimeoutExpired:
+        return fail("piper took longer than 60 s")
+    if getattr(proc, "returncode", 0):
+        return fail(f"piper exited {proc.returncode}: {_last_line(getattr(proc, 'stderr', ''))}")
+    if not os.path.exists(wav_path) or os.path.getsize(wav_path) == 0:
+        return fail(f"piper produced no audio ({wav_path} missing or empty) — "
+                    f"{_last_line(getattr(proc, 'stderr', ''))}")
+
+    if music is None:
+        return fail("no sound engine and no aplay — nothing can play the speech")
+    try:
+        if play_lock is not None:
+            with play_lock:
+                played = music.sound_play(wav_path)
+        else:
+            played = music.sound_play(wav_path)
+    except Exception as e:  # noqa: BLE001 - report it, the daemon must keep running
+        return fail(f"playback raised {type(e).__name__}: {e}")
+    # robot_hat's Music.sound_play returns None; only our AplayMusic says False.
+    if played is False:
+        return {"ok": False,
+                "error": f"playback failed: {getattr(music, 'last_error', None) or 'unknown'}"}
+    return {"ok": True, "spoke": text, "via": type(music).__name__}
 
 
 def audio_capability():

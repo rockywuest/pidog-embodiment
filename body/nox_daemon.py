@@ -28,7 +28,7 @@ os.environ["SDL_AUDIODRIVER"] = "alsa"
 # Now: honour an explicit AUDIODEV when its card really exists, otherwise pick a
 # detected card, otherwise leave AUDIODEV unset and let ALSA use its default.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nox_audio import describe_cards, resolve_device  # noqa: E402
+from nox_audio import AplayMusic, describe_cards, resolve_device, speak_text  # noqa: E402
 
 _audio_device = resolve_device(os.environ.get("AUDIODEV"))
 _PLAYBACK_DEVICE = _audio_device["device"]
@@ -385,6 +385,8 @@ def cmd_status():
         # battery with a failing ADC read looks identical otherwise (issue #12).
         info["battery_v"] = "error"
         info["battery_error"] = f"{type(e).__name__}: {e}"
+    # A background /speak cannot report its own failure; this is where it shows.
+    info["last_speak"] = _last_speak
     return info
 
 
@@ -670,8 +672,17 @@ def cmd_photo(path=None):
     return {"ok": False, "error": f"photo file not created: {actual}"}
 
 
-def cmd_speak(text):
-    """TTS via Piper + aplay/PiDog sound_effect. Fully async to avoid TCP timeout."""
+_last_speak = {"ok": None, "note": "nothing spoken since start"}
+
+
+def cmd_speak(text, wait=False):
+    """TTS via Piper, played through the robot's sound engine (or the aplay stand-in).
+
+    By default the speech runs in the background so a long sentence cannot hit
+    the TCP timeout; the answer then only confirms the checks below passed, and
+    the real outcome lands in the log and in status["last_speak"]. wait=True
+    speaks first and answers with what actually happened (issue #35).
+    """
     _mark_activity()
     # Guard: empty or whitespace-only text crashes Piper
     if not text or not text.strip():
@@ -689,45 +700,25 @@ def cmd_speak(text):
             "or set PIPER_BIN in nox.env"
         )}
 
-    def _tts_pipeline(speak_text):
-        import subprocess as sp
+    def _tts_pipeline(words):
+        global _last_speak
         # Use unique wav per call to avoid race conditions
         wav = f"/tmp/nox_speak_{int(time.time()*1000) % 100000}.wav"
+        music = getattr(dog, "music", None) or AplayMusic(device=_PLAYBACK_DEVICE)
         try:
-            safe_text = speak_text.replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
-            proc = sp.run(
-                f'echo "{safe_text}" | {PIPER_BIN} --model {PIPER_MODEL} --output_file {wav}',
-                shell=True, capture_output=True, text=True, timeout=60
-            )
-            if proc.returncode != 0:
-                print(f"[nox] Piper TTS failed: {proc.stderr}", flush=True)
-                return
-            # Play
-            played = False
-            try:
-                with dog_lock:
-                    if hasattr(dog, 'music') and dog.music is not None:
-                        dog.music.sound_play(wav)
-                        played = True
-            except Exception as e:
-                print(f"[nox] pygame playback failed: {e}", flush=True)
-            if not played:
-                try:
-                    sp.run(["aplay"] + (["-D", _PLAYBACK_DEVICE] if _PLAYBACK_DEVICE else []) + [wav],
-                           capture_output=True, timeout=60)
-                except Exception as e2:
-                    print(f"[nox] aplay also failed: {e2}", flush=True)
+            result = speak_text(words, PIPER_BIN, PIPER_MODEL, music, wav, play_lock=dog_lock)
         finally:
-            # Cleanup temp wav (after short delay for playback to finish)
             try:
-                time.sleep(0.5)
                 os.remove(wav)
-            except:
+            except OSError:
                 pass
+        _last_speak = dict(result, at=time.strftime("%H:%M:%S"))
+        return result
 
-    import threading
+    if wait:
+        return _tts_pipeline(text)
     threading.Thread(target=_tts_pipeline, args=(text,), daemon=True).start()
-    return {"ok": True, "spoke": text}
+    return {"ok": True, "spoke": text, "async": True}
 
 
 def cmd_sound(name):
@@ -1089,7 +1080,7 @@ COMMANDS = {
     "head_ema": lambda args: cmd_head_ema(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0), internal=args.get("_internal", False)),
     "rgb": lambda args: cmd_rgb(args.get("r", 128), args.get("g", 0), args.get("b", 255), args.get("mode", "breath"), args.get("bps", 0.8)),
     "photo": lambda args: cmd_photo(args.get("path")),
-    "speak": lambda args: cmd_speak(args.get("text", "")),
+    "speak": lambda args: cmd_speak(args.get("text", ""), wait=bool(args.get("wait"))),
     "sound": lambda args: cmd_sound(args.get("name", "single_bark_1")),
     "combo": lambda args: cmd_combo(args.get("sequence", "stand:1:60")),
     "wake": lambda args: cmd_wake(),

@@ -654,22 +654,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": ok, "results": results})
         
         elif path == "/speak":
-            # Speak text (non-blocking: respond immediately, speak in background)
+            # The daemon answers at once and speaks in its own thread, so waiting
+            # for that answer costs nothing — and it is the only place a missing
+            # voice model or piper binary shows up. This used to be fire-and-forget
+            # and returned ok:true for a dog that could not speak (issue #35).
+            # "blocking": true waits for the speech itself and reports how it went.
             text = body.get("text", "")
-            blocking = body.get("blocking", False)
+            blocking = bool(body.get("blocking", False))
             if text:
-                if blocking:
-                    r = send_to_daemon({"cmd": "speak", "text": text})
-                    self._send_json(r)
-                else:
-                    # Fire-and-forget in thread
-                    t = threading.Thread(
-                        target=send_to_daemon,
-                        args=({"cmd": "speak", "text": text},),
-                        daemon=True
-                    )
-                    t.start()
-                    self._send_json({"ok": True, "spoke": text, "async": True})
+                r = send_to_daemon({"cmd": "speak", "text": text, "wait": blocking},
+                                   timeout=90 if blocking else 10)
+                if isinstance(r, dict) and r.get("error") and "ok" not in r:
+                    r = {"ok": False, **r}
+                self._send_json(r)
             else:
                 self._send_json({"error": "no text"}, 400)
         
