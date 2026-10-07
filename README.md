@@ -320,10 +320,14 @@ curl -X POST http://your-robot.local:8888/speak \
   -H "Content-Type: application/json" \
   -d '{"text": "Hallo!", "blocking": true}'
 
-# Voice command (simulated)
+# Voice command (simulated) — needs the brain running (nox-brain on BRAIN_HOST).
+# Answers {"ok": true, "brain": "received"}, or says why the brain was not reached.
 curl -X POST http://your-robot.local:8888/voice/input \
   -H "Content-Type: application/json" \
   -d '{"text": "Setz dich hin und wedel mit dem Schwanz!"}'
+# Without an LLM the brain understands keyword commands in German, English and
+# French (sit/sitz/assis, lie/platz/couché, wag/wedel/remue la queue, …), several
+# per sentence. With OPENAI_API_KEY or a local OPENAI_URL it understands anything.
 
 # Take a photo
 curl http://your-robot.local:8888/photo -o snap.jpg
