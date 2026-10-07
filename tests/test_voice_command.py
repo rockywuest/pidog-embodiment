@@ -133,3 +133,19 @@ def test_no_brain_is_reported_and_the_message_waits(server_port, monkeypatch):  
     assert body["ok"] is False and body["queued"] is True
     assert "brain not reachable at 127.0.0.1:9" in body["error"]
     assert [m["text"] for m in bridge.perception.voice_inbox] == ["Platz"]
+
+
+def test_a_message_from_push_and_inbox_runs_once():
+    # An older bridge both pushes and keeps the message in /voice/inbox.
+    handled = []
+    msg = {"text": "Platz", "ts": 1791400000.123, "source": "voice"}
+    vb._push_queue.put(dict(msg))
+    vb.wait_for_push(handled.append, 0.2)
+    if vb.first_time(dict(msg)):  # what the inbox poll does next
+        handled.append(msg)
+    assert len(handled) == 1
+
+
+def test_the_same_words_later_run_again():
+    assert vb.first_time({"text": "Sitz", "ts": 1.0})
+    assert vb.first_time({"text": "Sitz", "ts": 2.0})

@@ -17,6 +17,7 @@ import sys
 import json
 import queue
 import re
+import threading
 import time
 import base64
 import socket
@@ -428,6 +429,25 @@ PUSH_PORT = 8889
 _push_queue = queue.Queue()
 
 
+_seen = []  # (ts, text) of recently handled messages, newest last
+_seen_lock = threading.Lock()
+
+
+def first_time(msg):
+    """True the first time a message is seen. A bridge from before issue #42
+    pushes AND keeps every message in /voice/inbox; without this a new brain
+    would sit twice for one "Platz"."""
+    key = (msg.get("ts"), msg.get("text"))
+    if key[0] is None:
+        return True  # no timestamp, nothing to compare — process it
+    with _seen_lock:
+        if key in _seen:
+            return False
+        _seen.append(key)
+        del _seen[:-200]
+    return True
+
+
 def wait_for_push(process_fn, wait):
     """Handle pushed voice messages as they arrive, for up to `wait` seconds."""
     deadline = time.time() + wait
@@ -439,7 +459,8 @@ def wait_for_push(process_fn, wait):
             msg = _push_queue.get(timeout=remaining)
         except queue.Empty:
             return
-        process_fn(msg)
+        if first_time(msg):
+            process_fn(msg)
 
 
 class PushHandler(BaseHTTPRequestHandler):
@@ -530,7 +551,8 @@ def main():
             messages = result.get("messages", [])
             
             for msg in messages:
-                process_fn(msg)
+                if first_time(msg):
+                    process_fn(msg)
             
             # Periodic sensor check
             now = time.time()
