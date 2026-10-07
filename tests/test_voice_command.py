@@ -149,3 +149,14 @@ def test_a_message_from_push_and_inbox_runs_once():
 def test_the_same_words_later_run_again():
     assert vb.first_time({"text": "Sitz", "ts": 1.0})
     assert vb.first_time({"text": "Sitz", "ts": 2.0})
+
+
+def test_a_failing_reply_does_not_stop_the_brain():
+    def boom(msg):
+        raise RuntimeError("LLM returned garbage")
+    vb.handle_message({"text": "Sitz", "ts": 99.5}, boom)  # must not raise
+
+
+def test_come_back_means_come():
+    assert vb.parse_simple_command("come back")["actions"] == ["forward"]
+    assert vb.parse_simple_command("go back")["actions"] == ["backward"]

@@ -327,9 +327,9 @@ _INTENTS = [
              "fr": r"couch[ée]e?|allonge\w*"}),
     ("stand", {"de": r"steh\w*|aufstehen|stopp?|halt", "en": r"stand( up)?|stop",
                "fr": r"debout|l[eè]ve-toi|arr[eê]te\w*|stop"}),
-    ("forward", {"de": r"komm( her)?|vorw[aä]rts|lauf\w*|geh los", "en": r"come( here)?|forward|walk|go",
+    ("forward", {"de": r"komm( her)?|vorw[aä]rts|lauf\w*|geh los", "en": r"come( here)?|forward|walk|go(?! back)",
                  "fr": r"viens|avance\w*|marche"}),
-    ("backward", {"de": r"zur[uü]ck", "en": r"back(wards?)?|reverse", "fr": r"recule\w*|arri[eè]re"}),
+    ("backward", {"de": r"zur[uü]ck", "en": r"(?<!come )back(wards?)?|reverse", "fr": r"recule\w*|arri[eè]re"}),
     ("turn_left", {"de": r"links", "en": r"(turn )?left", "fr": r"gauche"}),
     ("turn_right", {"de": r"rechts", "en": r"(turn )?right", "fr": r"droite"}),
     ("wag_tail", {"de": r"wedel\w*|schwanz", "en": r"wag\w*|tail", "fr": r"remue\w*|queue"}),
@@ -448,6 +448,18 @@ def first_time(msg):
     return True
 
 
+def handle_message(msg, process_fn):
+    """Run one voice message once. A failure here is a failed reply, not an
+    unreachable body — it must not count towards the circuit breaker."""
+    if not first_time(msg):
+        return
+    try:
+        process_fn(msg)
+    except Exception as e:  # noqa: BLE001 - keep listening
+        print(f"[brain] Voice processing failed for {msg.get('text', '')[:50]!r}: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+
 def wait_for_push(process_fn, wait):
     """Handle pushed voice messages as they arrive, for up to `wait` seconds."""
     deadline = time.time() + wait
@@ -459,8 +471,7 @@ def wait_for_push(process_fn, wait):
             msg = _push_queue.get(timeout=remaining)
         except queue.Empty:
             return
-        if first_time(msg):
-            process_fn(msg)
+        handle_message(msg, process_fn)
 
 
 class PushHandler(BaseHTTPRequestHandler):
@@ -551,8 +562,7 @@ def main():
             messages = result.get("messages", [])
             
             for msg in messages:
-                if first_time(msg):
-                    process_fn(msg)
+                handle_message(msg, process_fn)
             
             # Periodic sensor check
             now = time.time()
