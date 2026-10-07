@@ -25,6 +25,7 @@ Communicates with nox_daemon.py via TCP socket (localhost:9999).
 Sprint 3 of Nox Embodiment Upgrade.
 """
 
+import re
 import time
 import random
 import json
@@ -48,6 +49,26 @@ BATTERY_LOW_V = 6.8       # warn and rest
 BATTERY_CRITICAL_V = 6.2  # lie down and stay down
 BATTERY_ABSENT_V = 1.0   # at or below this the rail carries no pack
 BATTERY_ASSUMED_V = 8.4  # stand-in charge level when the real one is unknown
+
+
+_PERSON_WORDS = r"(person|people|human|humans|someone|man|woman|child|kid)"
+# "no people", "nobody", "without any person", "there are no humans" — a scene
+# description that rules people out must not send the patrol to investigate.
+_NO_PERSON = re.compile(
+    r"\b(no|not any|without( any)?|zero|nobody|no one|none|isn't|aren't|not)\b[^.,;]{0,20}?\b"
+    + _PERSON_WORDS + r"\b|\bnobody\b|\bno one\b")
+_PERSON = re.compile(r"\b" + _PERSON_WORDS + r"\b")
+
+
+def mentions_person(description):
+    """True when a vision description says a person is there (issue #36).
+
+    The patrol used plain substring matching, so "no people visible" — the
+    likeliest answer to a prompt asking about people — counted as a person.
+    """
+    text = (description or "").lower()
+    remaining = _NO_PERSON.sub(" ", text)
+    return bool(_PERSON.search(remaining))
 
 
 def classify_battery(raw):
@@ -693,7 +714,7 @@ class BehaviorEngine:
         vision_data = self._read_vision()
         if vision_data:
             desc = (vision_data.get('description') or '').lower()
-            if any(w in desc for w in ('person', 'people', 'human', 'someone')):
+            if mentions_person(desc):
                 print(f'[behavior] Vision: person detected → INVESTIGATE', flush=True)
                 self._transition('investigate')
                 return
