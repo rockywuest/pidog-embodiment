@@ -125,6 +125,17 @@ def capture_frame(timeout=PHOTO_TIMEOUT):
     return None, f"no photo in response: {list(result.keys())}"
 
 
+def capture_with_retry(wait=5):
+    """The warmup photo: one more try before giving up for a whole INTERVAL —
+    a camera that is still starting usually answers a few seconds later."""
+    photo_path, err = capture_frame()
+    if err:
+        print(f"[vision] Warmup capture failed ({err}), retrying once...", flush=True)
+        time.sleep(wait)
+        photo_path, err = capture_frame()
+    return photo_path, err
+
+
 # ─── Inference ───────────────────────────────────────────────────────────────
 
 def run_inference(image_path, prompt_type="patrol"):
@@ -247,13 +258,7 @@ def main():
 
     # First inference (warmup, may be slower)
     print("[vision] Running warmup inference...", flush=True)
-    photo_path, err = capture_frame()
-    if err:
-        # One more try before giving up for a whole INTERVAL: a camera that is
-        # still starting usually answers a few seconds later.
-        print(f"[vision] Warmup capture failed ({err}), retrying once...", flush=True)
-        time.sleep(5)
-        photo_path, err = capture_frame()
+    photo_path, err = capture_with_retry()
     if err:
         print(f"[vision] Warmup capture failed: {err}", flush=True)
         write_result(None, "patrol", None, error=err)
