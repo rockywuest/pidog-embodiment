@@ -42,15 +42,20 @@ TIMEOUT = 90        # kill subprocess after this many seconds (warmup can be slo
 
 DAEMON_HOST = "localhost"
 DAEMON_PORT = 9999
+# The first photo starts the camera inside the daemon: importing vilib (OpenCV,
+# picamera2) plus camera_start takes well over 10 s on a Pi 4. With the old 10 s
+# the warmup always failed and /vision showed "timed out" for a whole minute
+# (issue #36). Later photos come from the running camera in about a second.
+PHOTO_TIMEOUT = 45
 
 # ─── Prompts ─────────────────────────────────────────────────────────────────
 
 PROMPTS = {
+    # One plain sentence, no numbered checklist: the 256M model copied the
+    # list's first item back ("1) Any people.") instead of answering (#36).
     "patrol": (
-        "Describe what you see briefly. "
-        "1) Any people? Where? "
-        "2) Obstacles or objects in the path? "
-        "3) Is the path ahead clear?"
+        "Describe this image in one or two short sentences. "
+        "Mention any people and anything blocking the way."
     ),
     "describe": "Describe this scene in detail.",
     "obstacles": "Are there any obstacles ahead? How far away? Is it safe to walk forward?",
@@ -96,9 +101,9 @@ def _daemon_cmd(cmd_dict, timeout=10):
         return {"error": str(e)}
 
 
-def capture_frame():
+def capture_frame(timeout=PHOTO_TIMEOUT):
     """Take a photo via daemon and save as JPEG."""
-    result = _daemon_cmd({"cmd": "photo"})
+    result = _daemon_cmd({"cmd": "photo"}, timeout=timeout)
     if result.get("error"):
         return None, result["error"]
 
@@ -243,6 +248,12 @@ def main():
     # First inference (warmup, may be slower)
     print("[vision] Running warmup inference...", flush=True)
     photo_path, err = capture_frame()
+    if err:
+        # One more try before giving up for a whole INTERVAL: a camera that is
+        # still starting usually answers a few seconds later.
+        print(f"[vision] Warmup capture failed ({err}), retrying once...", flush=True)
+        time.sleep(5)
+        photo_path, err = capture_frame()
     if err:
         print(f"[vision] Warmup capture failed: {err}", flush=True)
         write_result(None, "patrol", None, error=err)
