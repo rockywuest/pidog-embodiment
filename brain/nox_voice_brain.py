@@ -15,6 +15,9 @@ Runs on Nox's Pi 5 (brain side).
 import os
 import sys
 import json
+import queue
+import re
+import threading
 import time
 import base64
 import socket
@@ -313,51 +316,162 @@ def process_voice_intelligent(msg):
 
 
 # ─── Simple Fallback (no API key) ───
+# Keyword commands for the no-LLM fallback (issue #42). Whole words only —
+# substring matching made "good dog" walk forward ("go") — and every command
+# in a sentence counts, in the order spoken: "Setz dich hin und wedel mit dem
+# Schwanz" is sit + wag_tail. German, English and French.
+_INTENTS = [
+    # (action, patterns per language)
+    ("sit", {"de": r"setz\w*|sitz\w*|hinsetzen", "en": r"sit", "fr": r"assis|assieds|asseoir"}),
+    ("lie", {"de": r"platz|leg dich|lieg\w*|hinlegen", "en": r"lie down|lay down|(?<!sit )down",
+             "fr": r"couch[ée]e?|allonge\w*"}),
+    ("stand", {"de": r"steh\w*|aufstehen|stopp?|halt", "en": r"stand( up)?|stop",
+               "fr": r"debout|l[eè]ve-toi|arr[eê]te\w*|stop"}),
+    ("forward", {"de": r"komm( her)?|vorw[aä]rts|lauf\w*|geh los", "en": r"come( here)?|forward|walk|go(?! back)",
+                 "fr": r"viens|avance\w*|marche"}),
+    ("backward", {"de": r"zur[uü]ck", "en": r"(?<!come )back(wards?)?|reverse", "fr": r"recule\w*|arri[eè]re"}),
+    ("turn_left", {"de": r"links", "en": r"(turn )?left", "fr": r"gauche"}),
+    ("turn_right", {"de": r"rechts", "en": r"(turn )?right", "fr": r"droite"}),
+    ("wag_tail", {"de": r"wedel\w*|schwanz", "en": r"wag\w*|tail", "fr": r"remue\w*|queue"}),
+    ("bark", {"de": r"bell\w*|gib laut", "en": r"bark", "fr": r"aboie\w*|aboyer"}),
+    ("shake_head", {"de": r"kopf sch[uü]tteln|sch[uü]ttel\w*", "en": r"shake( your)? head", "fr": r"secoue\w*"}),
+    ("stretch", {"de": r"streck\w*", "en": r"stretch", "fr": r"[ée]tire\w*"}),
+    ("doze_off", {"de": r"schlaf\w*", "en": r"sleep|nap", "fr": r"dors|dormir"}),
+    ("push_up", {"de": r"liegest[uü]tz\w*", "en": r"push ?ups?", "fr": r"pompes?"}),
+    ("howling", {"de": r"heul\w*", "en": r"howl\w*", "fr": r"hurle\w*"}),
+]
+_PRAISE = {"de": r"danke|brav\w*|guter hund", "en": r"thanks?|thank you|good (boy|girl|dog)",
+           "fr": r"merci|bon chien|bravo"}
+_WHO = {"de": r"wer bist du|wie hei[sß]t du|dein name", "en": r"who are you|your name",
+        "fr": r"qui es-tu|qui es tu|comment tu t'appelles|ton nom"}
+_REPLIES = {
+    "ok": {"de": "Mach ich!", "en": "On it!", "fr": "D'accord !"},
+    "praise": {"de": "Gerne!", "en": "You're welcome!", "fr": "Avec plaisir !"},
+    "who": {"de": "Ich bin Nox!", "en": "I'm Nox!", "fr": "Je suis Nox !"},
+    "unknown": {"de": "Das verstehe ich nicht: {text}", "en": "I don't understand: {text}",
+                "fr": "Je ne comprends pas : {text}"},
+}
+# Frequent function words, to answer in the speaker's language when no
+# command word gave it away.
+_LANG_HINTS = {
+    "de": r"ich|du|dich|und|der|die|das|nicht|mit|bitte",
+    "en": r"i|you|the|and|please|your|is|to",
+    "fr": r"je|tu|toi|le|la|les|et|pas|s'il|avec",
+}
+
+
+def _find(pattern, text):
+    # A hyphen may follow ("assis-toi") but not precede ("ex-sit" is no command).
+    return [m.start() for m in re.finditer(r"(?<![\w-])(?:" + pattern + r")(?!\w)", text)]
+
+
+def parse_simple_command(text):
+    """Keyword parse: {"actions": [...], "intent": ..., "lang": "de"|"en"|"fr"}."""
+    t = " ".join((text or "").lower().replace("’", "'").split())
+    votes = {"de": 0, "en": 0, "fr": 0}
+    hits = []
+    for action, patterns in _INTENTS:
+        for lang, pattern in patterns.items():
+            positions = _find(pattern, t)
+            if positions:
+                votes[lang] += 2
+                hits.append((positions[0], action))
+    actions = []
+    for _, action in sorted(hits):
+        if action not in actions:
+            actions.append(action)
+    intent = "command" if actions else None
+    for name, patterns in (("who", _WHO), ("praise", _PRAISE)):
+        for lang, pattern in patterns.items():
+            if _find(pattern, t):
+                votes[lang] += 2
+                intent = intent or name
+    for lang, pattern in _LANG_HINTS.items():
+        votes[lang] += len(_find(pattern, t))
+    lang = max(("de", "en", "fr"), key=lambda k: votes[k])  # ties → German
+    if intent == "praise" and not actions:
+        actions = ["wag_tail"]
+    if intent == "who" and not actions:
+        actions = ["wag_tail"]
+    return {"actions": actions, "intent": intent, "lang": lang}
+
+
 def process_voice_simple(msg):
-    """Fallback voice processing without API key."""
+    """Fallback voice processing without an LLM: keyword commands."""
     text = msg.get("text", "").strip()
     if not text:
         return
-    
+
     print(f"[brain-simple] Voice: '{text}'", flush=True)
-    text_lower = text.lower()
-    
-    # Movement
-    if any(w in text_lower for w in ["forward", "come", "go", "walk", "lauf", "geh", "vor", "komm"]):
-        bridge_post("/combo", {"actions": ["forward"], "speak": "Los geht's!"})
+    cmd = parse_simple_command(text)
+    lang = cmd["lang"]
+    if cmd["intent"] is None:
+        print(f"[brain-simple] No command recognised (lang={lang}) — set OPENAI_API_KEY "
+              "or OPENAI_URL for free-form understanding", flush=True)
+        bridge_post("/speak", {"text": _REPLIES["unknown"][lang].format(text=text)})
         return
-    if any(w in text_lower for w in ["back", "backward", "reverse", "zurück"]):
-        bridge_post("/combo", {"actions": ["backward"], "speak": "Ich gehe zurück!"})
-        return
-    if any(w in text_lower for w in ["stop", "stopp", "halt", "stand", "steh"]):
-        bridge_post("/combo", {"actions": ["stand"], "speak": "Okay!"})
-        return
-    if any(w in text_lower for w in ["sit", "sitz"]):
-        bridge_post("/combo", {"actions": ["sit"], "speak": "Mach ich!"})
-        return
-    if any(w in text_lower for w in ["lie", "down", "platz", "lieg"]):
-        bridge_post("/combo", {"actions": ["lie"], "speak": "Gemütlich!"})
-        return
-    
-    # Identity
-    if any(w in text_lower for w in ["who are", "your name", "wer bist", "name"]):
-        bridge_post("/combo", {"actions": ["wag_tail"], "speak": "Ich bin Nox!", "rgb": {"r": 128, "g": 0, "b": 255, "mode": "breath", "bps": 1}})
-        return
-    
-    # Emotion
-    if any(w in text_lower for w in ["thank", "good boy", "good dog", "danke", "brav"]):
-        bridge_post("/combo", {"actions": ["wag_tail"], "speak": "Gerne!", "rgb": {"r": 0, "g": 255, "b": 0, "mode": "breath", "bps": 1}})
-        return
-    
-    # Default
-    bridge_post("/speak", {"text": f"Ich habe verstanden: {text}."})
+    reply = _REPLIES["ok" if cmd["intent"] == "command" else cmd["intent"]][lang]
+    combo = {"actions": cmd["actions"], "speak": reply}
+    if cmd["intent"] in ("praise", "who"):
+        combo["rgb"] = ({"r": 0, "g": 255, "b": 0, "mode": "breath", "bps": 1} if cmd["intent"] == "praise"
+                        else {"r": 128, "g": 0, "b": 255, "mode": "breath", "bps": 1})
+    print(f"[brain-simple] → {cmd['actions']} ({lang})", flush=True)
+    bridge_post("/combo", combo)
 
 
 # ─── Main Loop ───
 # ─── Push Server (receives voice from bridge, zero latency) ───
 PUSH_PORT = 8889
-_push_queue = []
-_push_lock = __import__("threading").Lock()
+# Filled by the push server, drained by the main loop while it waits between
+# inbox polls — so a pushed command runs at once instead of never: this used to
+# be a plain list nobody read, and every command waited for the 5 s inbox poll
+# (issue #42).
+_push_queue = queue.Queue()
+
+
+_seen = []  # (ts, text) of recently handled messages, newest last
+_seen_lock = threading.Lock()
+
+
+def first_time(msg):
+    """True the first time a message is seen. A bridge from before issue #42
+    pushes AND keeps every message in /voice/inbox; without this a new brain
+    would sit twice for one "Platz"."""
+    key = (msg.get("ts"), msg.get("text"))
+    if key[0] is None:
+        return True  # no timestamp, nothing to compare — process it
+    with _seen_lock:
+        if key in _seen:
+            return False
+        _seen.append(key)
+        del _seen[:-200]
+    return True
+
+
+def handle_message(msg, process_fn):
+    """Run one voice message once. A failure here is a failed reply, not an
+    unreachable body — it must not count towards the circuit breaker."""
+    if not first_time(msg):
+        return
+    try:
+        process_fn(msg)
+    except Exception as e:  # noqa: BLE001 - keep listening
+        print(f"[brain] Voice processing failed for {msg.get('text', '')[:50]!r}: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+
+def wait_for_push(process_fn, wait):
+    """Handle pushed voice messages as they arrive, for up to `wait` seconds."""
+    deadline = time.time() + wait
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return
+        try:
+            msg = _push_queue.get(timeout=remaining)
+        except queue.Empty:
+            return
+        handle_message(msg, process_fn)
 
 
 class PushHandler(BaseHTTPRequestHandler):
@@ -368,12 +482,13 @@ class PushHandler(BaseHTTPRequestHandler):
         if self.path == "/voice/push":
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length).decode()) if length else {}
-            with _push_lock:
-                _push_queue.append(body)
+            _push_queue.put(body)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"ok":true}')
+            # "processes": tells the bridge it need not also keep the message in
+            # /voice/inbox — an older brain without it only queued pushes.
+            self.wfile.write(b'{"ok":true,"processes":true}')
             txt = body.get("text", "")[:50]
             print(f"[brain] Push received: {txt}", flush=True)
         else:
@@ -447,7 +562,7 @@ def main():
             messages = result.get("messages", [])
             
             for msg in messages:
-                process_fn(msg)
+                handle_message(msg, process_fn)
             
             # Periodic sensor check
             now = time.time()
@@ -480,7 +595,7 @@ def main():
                 time.sleep(min(consecutive_errors * 2, 30))
             continue
         
-        time.sleep(POLL_INTERVAL)
+        wait_for_push(process_fn, POLL_INTERVAL)
 
 
 if __name__ == "__main__":

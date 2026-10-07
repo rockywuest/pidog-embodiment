@@ -500,8 +500,9 @@ def process_transcription(text):
     # Visual: thinking
     set_rgb(128, 0, 255, "speak", 2.0)
 
-    # Post to bridge
-    post_to_bridge("/voice/input", {
+    # Post to bridge. It now says whether a brain got it (issue #42) — make
+    # that visible in the log instead of listening on as if all were well.
+    resp = post_to_bridge("/voice/input", {
         "text": process_text,
         "had_wake_word": had_wake_word,
         "in_conversation": state.in_conversation,
@@ -509,6 +510,9 @@ def process_transcription(text):
             ex["user"] for ex in state.conversation_history[-3:]
         ]
     })
+    if resp and resp.get("ok") is False:
+        print(f"[voice-v3] brain did not get '{process_text[:40]}': {resp.get('error')}"
+              f"{' — waiting in /voice/inbox' if resp.get('queued') else ''}", flush=True)
 
     state.add_exchange(process_text)
 

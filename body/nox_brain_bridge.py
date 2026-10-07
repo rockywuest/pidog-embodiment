@@ -108,17 +108,28 @@ AVAILABLE_SOUNDS = [
 
 # ─── Brain Push (zero-latency voice delivery) ───
 def push_to_brain(data, timeout=5):
-    """Push voice input directly to brain (no polling delay)."""
+    """Push voice input directly to brain (no polling delay).
+
+    Returns (handled, problem): handled is True only when the brain says it
+    processes pushes itself; problem is None when it was reached at all. The
+    brain's push server only queues the message and answers at once.
+    """
+    url = f"http://{BRAIN_HOST}:{BRAIN_CALLBACK_PORT}/voice/push"
     try:
-        url = f"http://{BRAIN_HOST}:{BRAIN_CALLBACK_PORT}/voice/push"
         body = json.dumps(data).encode()
         req = urllib.request.Request(url, data=body, method="POST")
         req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
+            raw = resp.read()
+        try:
+            handled = bool(json.loads(raw.decode() or "{}").get("processes"))
+        except (ValueError, AttributeError):
+            handled = False
+        return handled, None
     except Exception as e:
-        print(f"[bridge] Brain push failed: {e}", flush=True)
-        return None
+        reason = getattr(e, "reason", e)
+        print(f"[bridge] Brain push to {url} failed: {reason}", flush=True)
+        return False, f"brain not reachable at {BRAIN_HOST}:{BRAIN_CALLBACK_PORT} ({reason})"
 
 
 # ─── Daemon Communication ───
@@ -826,16 +837,25 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "ts": time.time(),
                     "source": "voice"
                 }
-                # Push to brain immediately (non-blocking)
-                threading.Thread(
-                    target=push_to_brain,
-                    args=(msg,),
-                    daemon=True
-                ).start()
-                # Also store in inbox as fallback
-                with perception.lock:
-                    perception.voice_inbox.append(msg)
-                self._send_json({"ok": True})
+                # Push for zero latency. The push used to run fire-and-forget,
+                # so this answered ok:true with no brain anywhere — the dog just
+                # stayed still (issue #42). Now the caller learns whether the
+                # brain got it. The inbox (which the brain polls) keeps the
+                # message unless the brain confirms it handles pushes itself —
+                # an older brain only queued them — so it runs exactly once.
+                handled, problem = push_to_brain(msg, timeout=3)
+                if not handled:
+                    with perception.lock:
+                        perception.voice_inbox.append(msg)
+                if problem:
+                    self._send_json({
+                        "ok": False, "error": problem, "queued": True,
+                        "hint": ("start the brain (nox-brain service) on BRAIN_HOST, or set "
+                                 "BRAIN_HOST in body/nox.env (127.0.0.1 if it runs on the robot). "
+                                 "The message waits in /voice/inbox until a brain polls it."),
+                    })
+                else:
+                    self._send_json({"ok": True, "brain": "received"})
             else:
                 self._send_json({"error": "no text"}, 400)
         

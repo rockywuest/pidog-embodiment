@@ -17,6 +17,18 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BODY_DIR="$REPO_DIR/body"
 BRIDGE_PORT="${PIDOG_BRIDGE_PORT:-8888}"
 
+# Under sudo, $HOME is /root: llama.cpp, the models and the voices all looked
+# missing although they were there (issue #42 log). Check the invoking user's
+# home — the services run as that user — and run lookups with that user's
+# rights, so a voice only root can read (/root/.piper_models) is not reported
+# as usable. Root stays root for what needs it (/etc/default/nox-brain).
+AS_USER=()
+if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
+  HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  export HOME
+  AS_USER=(sudo -u "$SUDO_USER" env "HOME=$HOME")
+fi
+
 if [[ -t 1 ]]; then
   G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; B=$'\033[1m'; N=$'\033[0m'
 else
@@ -223,7 +235,7 @@ if [[ $IS_BODY -eq 1 ]]; then
   if [[ -z "$piper_model" && -f "$BODY_DIR/nox.env" ]]; then
     piper_model="$(sed -n 's/^[[:space:]]*PIPER_MODEL=//p' "$BODY_DIR/nox.env" | tail -1)"
   fi
-  voice="$(python3 - "$BODY_DIR" "$piper_model" <<'PY' 2>/dev/null
+  voice="$(${AS_USER[@]+"${AS_USER[@]}"} python3 - "$BODY_DIR" "$piper_model" <<'PY' 2>/dev/null
 import sys
 sys.path.insert(0, sys.argv[1])
 from nox_audio import find_piper_voice
