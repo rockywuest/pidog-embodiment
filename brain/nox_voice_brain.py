@@ -94,6 +94,17 @@ class ConversationState:
 
 conversation = ConversationState()
 
+
+def numeric_battery(sensors):
+    """battery_v as float, or None. The daemon reports the STRING "error" when
+    its ADC read fails (#12) — that leaked into the LLM context as
+    "Battery: errorV" (or "0V" when the key was missing), and the dog invented
+    battery drama mid-answer (issue #45 follow-up). Unknown stays unknown."""
+    value = (sensors or {}).get("battery_v")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
 # Which language the dog speaks (issue #42 follow-up). "auto" (default):
 # answer in the language the user spoke. "de" / "en" / "fr": always that one —
 # match it to the robot's Piper voice. The prompt used to ask for German
@@ -281,12 +292,11 @@ def process_voice_intelligent(msg):
     status = bridge_get("/status")
     if not status.get("error"):
         sensors = status.get("sensors", {})
-        batt = sensors.get("battery_v", 0)
-        charging = sensors.get("charging", False)
-        if charging:
-            context_parts.append(f"Currently charging ({batt}V)")
-        else:
+        batt = numeric_battery(sensors)
+        if batt is not None:
             context_parts.append(f"Battery: {batt}V")
+        # unreadable battery: say nothing — "Battery: errorV" made the model
+        # talk about dying batteries instead of answering
     
     # Check if the user is asking about vision
     vision_words = ["see", "look", "watch", "what is", "who is", "show", "camera", "photo", "siehst", "schau", "guck", "was ist", "wer ist", "zeig", "kamera", "foto"]
@@ -639,8 +649,10 @@ def main():
                 status = bridge_get("/status")
                 if not status.get("error"):
                     sensors = status.get("sensors", {})
-                    batt = sensors.get("battery_v", 0)
-                    if batt < 6.8 and not battery_warned:
+                    batt = numeric_battery(sensors)
+                    if batt is None:
+                        pass  # unreadable — comparing the string "error" raised TypeError
+                    elif batt < 6.8 and not battery_warned:
                         bridge_post("/speak", {"text": _REPLIES["battery"][reply_language()]})
                         bridge_post("/rgb", {"r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
                         battery_warned = True
