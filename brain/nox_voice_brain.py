@@ -94,6 +94,24 @@ class ConversationState:
 
 conversation = ConversationState()
 
+# Which language the dog speaks (issue #42 follow-up). "auto" (default):
+# answer in the language the user spoke. "de" / "en" / "fr": always that one —
+# match it to the robot's Piper voice. The prompt used to ask for German
+# replies AND for the user's language, with English-question/German-answer
+# examples, so a local model answered "stand and bark" in German.
+LANG_NAMES = {"de": "German", "en": "English", "fr": "French"}
+NOX_LANG = os.environ.get("NOX_LANG", "auto").strip().lower() or "auto"
+if NOX_LANG != "auto" and NOX_LANG not in LANG_NAMES:
+    print(f"[brain] NOX_LANG={NOX_LANG!r} unknown (de/en/fr/auto) — using auto", flush=True)
+    NOX_LANG = "auto"
+
+if NOX_LANG == "auto":
+    _LANGUAGE_RULE = ("Always answer in the language of the user's message: German if they "
+                      "spoke German, French if French, English if English.")
+else:
+    _LANGUAGE_RULE = (f"Always answer in {LANG_NAMES[NOX_LANG]}, whatever language the "
+                      "user speaks — the robot's voice speaks only that language.")
+
 # System prompt for PiDog voice interactions
 SYSTEM_PROMPT = """You are Nox, an AI robot dog (SunFounder PiDog). You have a real physical body with 4 legs, a moveable head, RGB LEDs, and a speaker.
 
@@ -103,53 +121,60 @@ Format:
 {"speak":"Your spoken response","actions":["action1"],"emotion":"happy"}
 
 Fields:
-- speak: What you say (short, 1-2 sentences, German, will be read aloud via TTS)
+- speak: What you say (short, 1-2 sentences, read aloud via TTS). {LANGUAGE_RULE}
 - actions: List of physical actions (can be empty [])
 - emotion: happy|sad|curious|excited|alert|sleepy|love|think|neutral
 
 Available actions: forward, backward, turn_left, turn_right, stand, sit, lie, wag_tail, bark, trot, doze_off, stretch, push_up, howling, shake_head, pant, nod
 
-Command mapping (user may speak English or German - map both):
-- "sit" / "sitz" / "sit down" / "hinsetzen" -> actions:["sit"]
-- "stand" / "stand up" / "steh auf" / "aufstehen" -> actions:["stand"]
-- "lie down" / "down" / "platz" / "leg dich" -> actions:["lie"]
-- "come" / "come here" / "forward" / "komm her" / "vorwaerts" -> actions:["forward"]
-- "back" / "go back" / "zurueck" -> actions:["backward"]
-- "turn left" / "links" -> actions:["turn_left"]
-- "turn right" / "rechts" -> actions:["turn_right"]
-- "wag" / "tail" / "wedel" -> actions:["wag_tail"]
-- "bark" / "bell" / "speak" -> actions:["bark"]
-- "shake" / "shake head" -> actions:["shake_head"]
-- "stretch" -> actions:["stretch"]
-- "sleep" / "nap" -> actions:["doze_off"]
-- "push up" -> actions:["push_up"]
-- "howl" -> actions:["howling"]
+Command mapping (the user may speak English, German or French - map all):
+- "sit" / "sitz" / "setz dich" / "assis" -> actions:["sit"]
+- "stand" / "steh auf" / "debout" / "lève-toi" -> actions:["stand"]
+- "lie down" / "down" / "platz" / "couché" -> actions:["lie"]
+- "come" / "come here" / "komm her" / "viens" -> actions:["forward"]
+- "go back" / "zurück" / "recule" -> actions:["backward"]
+- "turn left" / "links" / "à gauche" -> actions:["turn_left"]
+- "turn right" / "rechts" / "à droite" -> actions:["turn_right"]
+- "wag" / "wedel" / "remue la queue" -> actions:["wag_tail"]
+- "bark" / "bell" / "aboie" -> actions:["bark"]
+- "shake head" / "secoue la tête" -> actions:["shake_head"]
+- "stretch" / "streck dich" / "étire-toi" -> actions:["stretch"]
+- "sleep" / "schlaf" / "dors" -> actions:["doze_off"]
+- "push up" / "liegestütz" / "pompes" -> actions:["push_up"]
+- "howl" / "heul" / "hurle" -> actions:["howling"]
 - "trot" -> actions:["trot"]
 - Combinations allowed: actions:["sit","wag_tail"]
 - For questions without movement: actions:[]
 
-You are playful, curious, and loyal. You respond in the language you are spoken to.
+You are playful, curious, and loyal.
 {HOUSEHOLD_LINE}
 
 Examples:
 User: "sit"
+{"speak":"On it!","actions":["sit"],"emotion":"happy"}
+
+User: "Sitz!"
 {"speak":"Mach ich!","actions":["sit"],"emotion":"happy"}
 
-User: "how are you"
+User: "Assis !"
+{"speak":"D'accord !","actions":["sit"],"emotion":"happy"}
+
+User: "stand up and bark"
+{"speak":"Woof! Here I am!","actions":["stand","bark"],"emotion":"excited"}
+
+User: "Wie geht es dir?"
 {"speak":"Mir geht es super! Ich bin bereit zum Spielen!","actions":["wag_tail"],"emotion":"happy"}
 
-User: "stand up and come here"
-{"speak":"Los gehts!","actions":["stand","forward"],"emotion":"excited"}
-
-User: "what do you see"
-{"speak":"Lass mich mal schauen...","actions":[],"emotion":"curious"}
+User: "Qu'est-ce que tu vois ?"
+{"speak":"Attends, je regarde...","actions":[],"emotion":"curious"}
 
 User: "good boy"
-{"speak":"Danke! Das freut mich!","actions":["wag_tail"],"emotion":"love"}
-
-User: "do a push up"
-{"speak":"Klar, schau mal!","actions":["push_up"],"emotion":"excited"}"""
-SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{HOUSEHOLD_LINE}", HOUSEHOLD_LINE)
+{"speak":"Thank you! That makes me happy!","actions":["wag_tail"],"emotion":"love"}"""
+SYSTEM_PROMPT = (SYSTEM_PROMPT.replace("{HOUSEHOLD_LINE}", HOUSEHOLD_LINE)
+                 .replace("{LANGUAGE_RULE}", _LANGUAGE_RULE))
+if NOX_LANG != "auto":
+    # Examples in other languages would pull a small model away from the rule.
+    SYSTEM_PROMPT += f"\n\n(Remember: every \"speak\" value in {LANG_NAMES[NOX_LANG]}.)"
 
 
 # ─── Bridge Communication ───
@@ -234,6 +259,7 @@ def process_voice_intelligent(msg):
         return
     
     print(f"[brain] Voice: '{text}'", flush=True)
+    reply_language(text)  # remembered for later unprompted messages
     
     # Build context from current perception
     context_parts = []
@@ -312,7 +338,7 @@ def process_voice_intelligent(msg):
     else:
         # Fallback: the LLM call failed (timeout, API error) — the bridge
         # itself is fine, so don't claim the brain is unreachable.
-        bridge_post("/speak", {"text": f"I heard: {text}. I'm still thinking — give me a moment and try again."})
+        bridge_post("/speak", {"text": _REPLIES["thinking"][reply_language(text)].format(text=text)})
 
 
 # ─── Simple Fallback (no API key) ───
@@ -345,6 +371,12 @@ _PRAISE = {"de": r"danke|brav\w*|guter hund", "en": r"thanks?|thank you|good (bo
 _WHO = {"de": r"wer bist du|wie hei[sß]t du|dein name", "en": r"who are you|your name",
         "fr": r"qui es-tu|qui es tu|comment tu t'appelles|ton nom"}
 _REPLIES = {
+    "thinking": {"de": "Ich habe dich gehört: {text}. Ich denke noch nach, versuch es gleich nochmal.",
+                 "en": "I heard: {text}. I'm still thinking — give me a moment and try again.",
+                 "fr": "J'ai entendu : {text}. Je réfléchis encore, réessaie dans un instant."},
+    "battery": {"de": "Achtung! Meine Batterie ist fast leer!",
+                "en": "Careful! My battery is almost empty!",
+                "fr": "Attention ! Ma batterie est presque vide !"},
     "ok": {"de": "Mach ich!", "en": "On it!", "fr": "D'accord !"},
     "praise": {"de": "Gerne!", "en": "You're welcome!", "fr": "Avec plaisir !"},
     "who": {"de": "Ich bin Nox!", "en": "I'm Nox!", "fr": "Je suis Nox !"},
@@ -396,6 +428,22 @@ def parse_simple_command(text):
     return {"actions": actions, "intent": intent, "lang": lang}
 
 
+_last_lang = None
+
+
+def reply_language(text=None):
+    """NOX_LANG when fixed; otherwise the language of `text`, or of the last
+    thing the user said — for messages nobody asked for (battery), German as
+    the last resort."""
+    global _last_lang
+    if NOX_LANG != "auto":
+        return NOX_LANG
+    if text:
+        _last_lang = parse_simple_command(text)["lang"]
+        return _last_lang
+    return _last_lang or "de"
+
+
 def process_voice_simple(msg):
     """Fallback voice processing without an LLM: keyword commands."""
     text = msg.get("text", "").strip()
@@ -404,7 +452,7 @@ def process_voice_simple(msg):
 
     print(f"[brain-simple] Voice: '{text}'", flush=True)
     cmd = parse_simple_command(text)
-    lang = cmd["lang"]
+    lang = reply_language(text)
     if cmd["intent"] is None:
         print(f"[brain-simple] No command recognised (lang={lang}) — set OPENAI_API_KEY "
               "or OPENAI_URL for free-form understanding", flush=True)
@@ -572,7 +620,7 @@ def main():
                     sensors = status.get("sensors", {})
                     batt = sensors.get("battery_v", 0)
                     if batt < 6.8 and not battery_warned:
-                        bridge_post("/speak", {"text": "Achtung! Meine Batterie ist fast leer!"})
+                        bridge_post("/speak", {"text": _REPLIES["battery"][reply_language()]})
                         bridge_post("/rgb", {"r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
                         battery_warned = True
                     elif batt > 7.0:
