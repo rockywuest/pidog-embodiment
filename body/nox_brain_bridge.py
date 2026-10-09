@@ -452,7 +452,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(perception.snapshot())
         
         elif path == "/photo":
-            # Take a photo and return it
+            # Take a photo and return it. ?format=jpeg sends the raw image —
+            # the README's own `curl /photo -o snap.jpg` produced a JSON file
+            # that no viewer would open (issue #46).
             result = capture_and_detect()
             # Update perception state
             perception.update(
@@ -460,7 +462,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 last_photo_path=result.get("photo_path"),
                 last_photo_b64=result.get("photo_b64"),
             )
-            self._send_json(result)
+            query = self.path.partition("?")[2]
+            if "format=jpeg" in query or "format=jpg" in query:
+                b64 = result.get("photo_b64")
+                if not b64:
+                    self._send_json({"ok": False, "error": result.get("error", "no photo taken")}, 503)
+                else:
+                    img = base64.b64decode(b64)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(img)))
+                    self.end_headers()
+                    self.wfile.write(img)
+            else:
+                self._send_json(result)
         
         elif path == "/look":
             # Take photo with full analysis — returns everything

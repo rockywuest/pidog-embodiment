@@ -363,3 +363,45 @@ def test_sox_uses_the_default_output_when_no_device_is_known(mp3):
     run = Recorder(missing=["mpg123", "ffmpeg"])
     AplayMusic(runner=run).sound_play(mp3)
     assert run.calls[-1] == ["sox", mp3, "-d"]
+
+
+# ─── capture side: which card has the microphone (issue #45) ───
+
+from body.nox_audio import find_capture_device, list_capture_cards  # noqa: E402
+
+ARECORD_VOICEHAT = """**** List of CAPTURE Hardware Devices ****
+card 2: sndrpigooglevoi [snd_rpi_googlevoicehat_soundcar], device 0: Google voiceHAT SoundCard HiFi voicehat-hifi-0 [...]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+"""
+ARECORD_USB = """**** List of CAPTURE Hardware Devices ****
+card 1: Device [USB PnP Sound Device], device 0: USB Audio [USB Audio]
+"""
+ARECORD_ODD = """**** List of CAPTURE Hardware Devices ****
+card 3: Webcam [HD Webcam], device 0: USB Audio [USB Audio]
+"""
+
+
+def test_the_robot_hats_own_mic_is_found():
+    r = find_capture_device(runner=AplayOutput(ARECORD_VOICEHAT))
+    assert r["device"] == "plughw:2,0" and "googlevoi" in r["reason"]
+
+
+def test_a_usb_mic_is_found():
+    assert find_capture_device(runner=AplayOutput(ARECORD_USB))["device"] == "plughw:1,0"
+
+
+def test_an_unnamed_capture_card_is_still_used():
+    r = find_capture_device(runner=AplayOutput(ARECORD_ODD))
+    assert r["device"] == "plughw:3,0" and "only capture card" in r["reason"]
+
+
+def test_no_capture_device_stays_none():
+    # the old code invented plughw:3,0 here — arecord then died silently (#45)
+    r = find_capture_device(runner=AplayOutput("**** List of CAPTURE Hardware Devices ****\n"))
+    assert r["device"] is None and "MIC_DEVICE" in r["reason"]
+
+
+def test_an_explicit_mic_device_wins():
+    r = find_capture_device("plughw:9,0", runner=AplayOutput(ARECORD_VOICEHAT))
+    assert r["device"] == "plughw:9,0" and "nox.env" in r["reason"]

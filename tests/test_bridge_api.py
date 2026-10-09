@@ -233,3 +233,35 @@ def test_vosk_model_path_is_documented_where_the_service_reads_it():
         env = f.read()
     assert "VOSK_MODEL_PATH" in env and "alphacephei.com/vosk/models" in env
     assert "NOX_FACE_DB_DIR" in env and "PIDOG_MEMORY_DIR" in env
+
+
+def test_photo_format_jpeg_returns_the_image_itself(server_port, monkeypatch):
+    # The README's own `curl /photo -o snap.jpg` saved JSON — issue #46.
+    import base64 as _b64
+    import urllib.request as _rq
+    import body.nox_brain_bridge as _b
+
+    jpeg = b"\xff\xd8\xff\xe0fakejpegbytes"
+    monkeypatch.setattr(_b, "capture_and_detect",
+                        lambda: {"ok": True, "photo_b64": _b64.b64encode(jpeg).decode(),
+                                 "faces": []})
+    with _rq.urlopen(f"http://127.0.0.1:{server_port}/photo?format=jpeg", timeout=10) as r:
+        assert r.headers["Content-Type"] == "image/jpeg"
+        assert r.read() == jpeg
+    # without the format flag the JSON contract is unchanged
+    with _rq.urlopen(f"http://127.0.0.1:{server_port}/photo", timeout=10) as r:
+        assert "photo_b64" in json.loads(r.read())
+
+
+def test_photo_format_jpeg_without_a_camera_is_503(server_port, monkeypatch):
+    import urllib.error as _err
+    import urllib.request as _rq
+    import body.nox_brain_bridge as _b
+
+    monkeypatch.setattr(_b, "capture_and_detect",
+                        lambda: {"ok": False, "error": "camera init failed"})
+    try:
+        _rq.urlopen(f"http://127.0.0.1:{server_port}/photo?format=jpeg", timeout=10)
+        assert False, "expected 503"
+    except _err.HTTPError as e:
+        assert e.code == 503 and "camera" in json.loads(e.read())["error"]

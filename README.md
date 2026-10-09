@@ -346,8 +346,9 @@ curl -X POST http://your-robot.local:8888/voice/input \
 # It answers in the language you spoke; NOX_LANG=fr (or de/en) in
 # /etc/default/nox-brain fixes one — match it to the robot's Piper voice.
 
-# Take a photo
-curl http://your-robot.local:8888/photo -o snap.jpg
+# Take a photo — ?format=jpeg returns the image itself (without it: JSON
+# with the photo as base64 in "photo_b64", plus detected faces)
+curl "http://your-robot.local:8888/photo?format=jpeg" -o snap.jpg
 ```
 
 **Voice for `/speak`:** pip installs piper, but no voice. The daemon uses any

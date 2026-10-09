@@ -157,6 +157,54 @@ def resolve_device(requested=None, runner=None):
                        "in body/nox.env to pin one, or AUDIODEV=auto to detect)")}
 
 
+
+# Capture: which card has the microphone. The voice loop used to accept only
+# cards named "USB" and then fall back to plughw:3,0 — a device that exists on
+# no PiDog — so the robot HAT's own microphones (a "Google voiceHAT" card, like
+# the speaker) were never found and arecord died instantly (issue #45).
+MIC_KEYWORDS = ("usb", "voicehat", "googlevoi", "seeed", "respeaker", "mic")
+
+
+def list_capture_cards(runner=None):
+    """ALSA capture cards from `arecord -l`, as [{"index": int, "id": str}]."""
+    run = runner or subprocess.run
+    try:
+        out = run(["arecord", "-l"], capture_output=True, text=True, timeout=5)
+    except Exception:
+        return []
+    cards, seen = [], set()
+    for line in (out.stdout or "").splitlines():
+        m = re.match(r"card (\d+): (\S+)", line.strip())
+        if m and m.group(1) not in seen:
+            seen.add(m.group(1))
+            cards.append({"index": int(m.group(1)), "id": m.group(2)})
+    return cards
+
+
+def find_capture_device(configured=None, runner=None):
+    """The microphone to record from: {"device": str|None, "reason": str}.
+
+    An explicit MIC_DEVICE wins. Otherwise: a card that sounds like a mic
+    (USB, the robot HAT's voiceHAT, ReSpeaker...), else the only capture card
+    there is, else None — and None must stay None: inventing a device just
+    moves the failure into arecord, silently.
+    """
+    if configured:
+        return {"device": configured, "reason": "MIC_DEVICE from body/nox.env"}
+    cards = list_capture_cards(runner)
+    if not cards:
+        return {"device": None,
+                "reason": "arecord -l lists no capture device — plug in a USB "
+                          "microphone, or set MIC_DEVICE in body/nox.env"}
+    for card in cards:
+        if any(k in card["id"].lower() for k in MIC_KEYWORDS):
+            return {"device": f"plughw:{card['index']},0",
+                    "reason": f"capture card {card['index']}:{card['id']}"}
+    card = cards[0]
+    return {"device": f"plughw:{card['index']},0",
+            "reason": f"only capture card: {card['index']}:{card['id']}"}
+
+
 class AplayMusic:
     """Minimal stand-in for robot_hat's ``Music``, playing via command line tools.
 
