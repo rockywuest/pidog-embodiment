@@ -155,7 +155,14 @@ if [[ $IS_BODY -eq 1 ]]; then
   check_service nox-bridge
   # nox-voice exits cleanly when no Vosk model is installed — in that case
   # "not running" is the documented behavior, not a failure.
-  vosk_model_dir="${VOSK_MODEL_PATH:-$HOME/vosk-models/vosk-model-small-de-0.15}"
+  # VOSK_MODEL_PATH lives in body/nox.env (the unit's EnvironmentFile), not in
+  # this shell — reading only $VOSK_MODEL_PATH reported "no Vosk model" on a
+  # robot whose French model was loading fine (issue #45).
+  vosk_model_dir="${VOSK_MODEL_PATH:-}"
+  if [[ -z "$vosk_model_dir" && -f "$BODY_DIR/nox.env" ]]; then
+    vosk_model_dir="$(sed -n 's/^[[:space:]]*VOSK_MODEL_PATH=//p' "$BODY_DIR/nox.env" | tail -1)"
+  fi
+  vosk_model_dir="${vosk_model_dir:-$HOME/vosk-models/vosk-model-small-de-0.15}"
   if [[ ! -f /etc/systemd/system/nox-voice.service ]]; then
     warn "nox-voice is not installed"
     hint "run: sudo ./scripts/install-body.sh (body) or install-brain.sh (brain)"
@@ -293,6 +300,16 @@ PY
   fi
 
   section "Body — voice input (Vosk STT, optional)"
+  if [[ -d "$vosk_model_dir" ]]; then
+    pass "Vosk model present ($(basename "$vosk_model_dir"))"
+  fi
+  mic_line="$(arecord -l 2>/dev/null | grep -E '^card [0-9]+:' | head -1)"
+  if [[ -n "$mic_line" ]]; then
+    pass "microphone found (${mic_line%%,*})"
+  else
+    warn "no capture device — voice input needs a microphone"
+    hint "plug in a USB mic, or set MIC_DEVICE in body/nox.env; check: arecord -l"
+  fi
   vosk_model="${VOSK_MODEL_PATH:-$HOME/vosk-models/vosk-model-small-de-0.15}"
   if [[ -d "$vosk_model" ]]; then
     pass "Vosk model present ($(basename "$vosk_model"))"

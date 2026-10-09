@@ -40,25 +40,14 @@ DAEMON_PORT = 9999
 SAMPLE_RATE = 16000
 
 
-def find_usb_mic():
-    """Auto-detect USB microphone ALSA device (card number changes across reboots)."""
-    try:
-        result = subprocess.run(["arecord", "-l"], capture_output=True, text=True)
-        for line in result.stdout.splitlines():
-            if "USB" in line and "card" in line:
-                card_num = line.split("card ")[1].split(":")[0]
-                device = f"plughw:{card_num},0"
-                print(f"[voice-v2] Found USB mic: {device}", flush=True)
-                return device
-    except Exception as e:
-        print(f"[voice-v2] Mic detection error: {e}", flush=True)
-    
-    print("[voice-v2] WARNING: No USB mic found, falling back to plughw:3,0", flush=True)
-    return "plughw:3,0"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nox_audio import find_capture_device, watch_stderr  # noqa: E402
 
-
-CAPTURE_DEVICE = find_usb_mic()
-os.environ["AUDIODEV"] = CAPTURE_DEVICE
+_mic = find_capture_device(os.environ.get("MIC_DEVICE"))
+CAPTURE_DEVICE = _mic["device"]
+print(f"[voice-v2] Microphone: {CAPTURE_DEVICE or 'NONE'} ({_mic['reason']})", flush=True)
+if CAPTURE_DEVICE:
+    os.environ["AUDIODEV"] = CAPTURE_DEVICE
 
 # Software gain: amplify mic input before feeding to Vosk
 # USB mic on Pi 4 has very low sensitivity even at max hardware gain
@@ -279,13 +268,19 @@ def main():
     rec = KaldiRecognizer(model, SAMPLE_RATE)
     rec.SetWords(True)
 
-    # Audio input
+    # Audio input. No microphone is a clean, EXPLAINED stop (like no model) —
+    # the old path invented plughw:3,0, arecord died on it, and the loop ended
+    # with nothing but "Voice loop stopped" (issue #45).
+    if not CAPTURE_DEVICE:
+        print(f"[voice-v2] No microphone: {_mic['reason']}. Voice input stays off.", flush=True)
+        return
     print("[voice-v2] Starting audio capture...", flush=True)
     process = subprocess.Popen(
         ["arecord", "-D", CAPTURE_DEVICE, "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw"],
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.PIPE
     )
+    stderr_lines = watch_stderr(process)  # drained live — an undrained PIPE stalls arecord
 
     # Signal we're listening (no TTS — it kills the audio pipeline)
     try:
@@ -301,7 +296,13 @@ def main():
         while True:
             data = process.stdout.read(4000)
             if len(data) == 0:
-                break
+                # arecord ended — say WHY, and exit non-zero so systemd retries
+                # (a mic that is still enumerating usually works seconds later).
+                time.sleep(0.2)  # let the drain thread catch the last lines
+                print(f"[voice-v2] audio capture ended: "
+                      f"{stderr_lines[-1] if stderr_lines else 'no error output'} "
+                      f"(device {CAPTURE_DEVICE})", flush=True)
+                sys.exit(1)
 
             state.update()
 

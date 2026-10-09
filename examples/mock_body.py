@@ -111,6 +111,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(dog.sensors())
         elif path == "/photo":
             dog.log("📷 *click*")
+            if "format=jpeg" in (self.path.partition("?")[2]) or "format=jpg" in self.path:
+                img = __import__("base64").b64decode(TINY_JPEG_B64)
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(img)))
+                self.end_headers()
+                self.wfile.write(img)
+                return
             self._json({"ok": True, "mock": True, "photo_b64": TINY_JPEG_B64,
                         "faces": [], "face_count": 0})
         elif path == "/vision":
