@@ -14,6 +14,7 @@ Pipeline: Mic → arecord 16kHz → Amplify → VAD speech detection → Buffer 
 """
 
 import os
+import sys
 import json
 import time
 import struct
@@ -62,24 +63,14 @@ CONVERSATION_TIMEOUT = 45.0
 MIN_PHRASE_LENGTH = 2
 
 
-def find_usb_mic():
-    """Auto-detect USB microphone ALSA device."""
-    try:
-        result = subprocess.run(["arecord", "-l"], capture_output=True, text=True)
-        for line in result.stdout.splitlines():
-            if "USB" in line and "card" in line:
-                card_num = line.split("card ")[1].split(":")[0]
-                device = f"plughw:{card_num},0"
-                print(f"[voice-v3] Found USB mic: {device}", flush=True)
-                return device
-    except Exception as e:
-        print(f"[voice-v3] Mic detection error: {e}", flush=True)
-    print("[voice-v3] WARNING: No USB mic found, falling back to plughw:3,0", flush=True)
-    return "plughw:3,0"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from nox_audio import find_capture_device  # noqa: E402
 
-
-CAPTURE_DEVICE = find_usb_mic()
-os.environ["AUDIODEV"] = CAPTURE_DEVICE
+_mic = find_capture_device(os.environ.get("MIC_DEVICE"))
+CAPTURE_DEVICE = _mic["device"]
+print(f"[voice-v3] Microphone: {CAPTURE_DEVICE or 'NONE'} ({_mic['reason']})", flush=True)
+if CAPTURE_DEVICE:
+    os.environ["AUDIODEV"] = CAPTURE_DEVICE
 
 
 # ─── Audio Processing ───
@@ -310,7 +301,11 @@ def main():
     import webrtcvad
     vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
 
-    # Audio input via arecord
+    # Audio input via arecord. No microphone is a clean, explained stop —
+    # not a TypeError from Popen (review of #51).
+    if not CAPTURE_DEVICE:
+        print(f"[voice-v3] No microphone: {_mic['reason']}. Voice input stays off.", flush=True)
+        return
     print("[voice-v3] Starting audio capture...", flush=True)
     process = subprocess.Popen(
         ["arecord", "-D", CAPTURE_DEVICE, "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw"],
