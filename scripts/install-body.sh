@@ -39,7 +39,8 @@ fi
 # Old templates shipped literal <PLACEHOLDER> values; services started with
 # those fail with cryptic DNS errors. Refuse to (re)start until they're gone.
 ENV_HAS_PLACEHOLDERS=0
-if grep -q '[<>]' "$BODY_DIR/nox.env"; then
+# Only outside comments: the example's own comments show "/home/<you>/..."
+if grep -qE '^[^#]*[<>]' "$BODY_DIR/nox.env"; then
   ENV_HAS_PLACEHOLDERS=1
 fi
 
