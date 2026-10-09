@@ -139,3 +139,9 @@ def test_status_is_trimmed_to_the_essentials(fake_bridge):
     body = json.loads(r["result"]["content"][0]["text"])
     assert body["battery_v"] == 7.9 and body["last_speak"] == {"ok": True}
     assert "perception" not in body
+
+
+@pytest.mark.parametrize("bad", [[{"jsonrpc": "2.0", "id": 1, "method": "ping"}], "ping", 42, None])
+def test_a_batch_or_non_object_is_an_invalid_request_not_a_crash(bad):
+    r = mcp.handle(bad)
+    assert r["error"]["code"] == -32600

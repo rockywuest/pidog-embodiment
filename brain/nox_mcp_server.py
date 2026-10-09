@@ -220,6 +220,11 @@ def _result(msg_id, result):
 
 def handle(message):
     """One JSON-RPC message in, one response dict out (None for notifications)."""
+    if not isinstance(message, dict):
+        # A batch array (pre-2025 JSON-RPC) or a bare value. Batching was
+        # removed from MCP in 2025-06-18; answer with invalid-request instead
+        # of crashing on message.get().
+        return _error(None, -32600, "invalid request: expected a single JSON-RPC object")
     method = message.get("method", "")
     msg_id = message.get("id")
     params = message.get("params") or {}
