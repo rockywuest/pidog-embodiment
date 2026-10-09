@@ -328,6 +328,8 @@ curl -X POST http://your-robot.local:8888/voice/input \
 # Without an LLM the brain understands keyword commands in German, English and
 # French (sit/sitz/assis, lie/platz/couché, wag/wedel/remue la queue, …), several
 # per sentence. With OPENAI_API_KEY or a local OPENAI_URL it understands anything.
+# It answers in the language you spoke; NOX_LANG=fr (or de/en) in
+# /etc/default/nox-brain fixes one — match it to the robot's Piper voice.
 
 # Take a photo
 curl http://your-robot.local:8888/photo -o snap.jpg
