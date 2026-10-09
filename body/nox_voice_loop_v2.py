@@ -93,13 +93,15 @@ def compute_rms(data):
 
 
 # Exact wake words
-WAKE_WORDS_EXACT = ["nox", "knox", "hallo nox", "hey nox", "na nox", "hi nox"]
-# Fuzzy patterns: German Vosk model may mis-transcribe "Nox" as these
-WAKE_WORDS_FUZZY = [
-    "nox", "knox", "noks", "nocks", "noxx",
-    "fox", "box",  # phonetically close
-]
-WAKE_PREFIXES = ["hallo", "hey", "hi", "na"]  # "hallo nox" etc.
+# The base wake word is configurable: small Vosk models mangle "Nox" badly in
+# some languages (French hears "inox" or "knox"), and a word that exists in
+# the model's vocabulary triggers far more reliably (issue #45 follow-up).
+WAKE_WORD = (os.environ.get("WAKE_WORD") or "nox").strip().lower()
+WAKE_PREFIXES = ["hallo", "hey", "hi", "na", "he", "eh"]  # "hallo nox" etc.
+WAKE_WORDS_EXACT = [WAKE_WORD] + [f"{p} {WAKE_WORD}" for p in WAKE_PREFIXES]
+if WAKE_WORD == "nox":
+    # Mis-transcriptions seen in the wild for the default name
+    WAKE_WORDS_EXACT = ["nox", "knox", "inox"] + WAKE_WORDS_EXACT[1:]
 
 SILENCE_TIMEOUT = 2.0
 MIN_PHRASE_LENGTH = 2
@@ -212,9 +214,9 @@ def fuzzy_wake_word_check(text):
                 cleaned = cleaned[1:].strip()
             return cleaned, True
     
-    # 2. Single word fuzzy match: any word within edit distance 1 of "nox"
+    # 2. Single word fuzzy match: any word within edit distance 1 of the wake word
     for i, word in enumerate(words):
-        if levenshtein(word, "nox") <= 1:
+        if levenshtein(word, WAKE_WORD) <= 1:
             # Found fuzzy "nox" — rest of text is the content
             remaining = " ".join(words[i+1:])
             return remaining, True
@@ -223,7 +225,7 @@ def fuzzy_wake_word_check(text):
     for i, word in enumerate(words):
         if word in WAKE_PREFIXES and i + 1 < len(words):
             next_word = words[i + 1]
-            if levenshtein(next_word, "nox") <= 2:  # more lenient with prefix
+            if levenshtein(next_word, WAKE_WORD) <= 2:  # more lenient with prefix
                 remaining = " ".join(words[i+2:])
                 return remaining, True
     
