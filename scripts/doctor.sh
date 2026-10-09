@@ -312,7 +312,7 @@ PY
   else
     warn "no Vosk model — voice input stays off (nox-voice exits cleanly)"
     hint "download one for YOUR language from https://alphacephei.com/vosk/models, unzip it,"
-    hint "e.g. VOSK_MODEL_PATH=/home/$USER/vosk-models/vosk-model-small-fr-0.22 in body/nox.env,"
+    hint "e.g. VOSK_MODEL_PATH=/home/$RUN_USER_HINT/vosk-models/vosk-model-small-fr-0.22 in body/nox.env,"
     hint "then: sudo systemctl restart nox-voice. Small models only — a 1 GB+ model OOMs a Pi 4."
   fi
   mic_line="$(arecord -l 2>/dev/null | grep -E '^card [0-9]+:' | head -1)"
