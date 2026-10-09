@@ -18,7 +18,6 @@ import time
 import random
 import json
 import threading
-import math
 
 # Try to import memory — graceful fallback if not available
 try:
@@ -276,7 +275,7 @@ class AutonomousBehavior:
                 elif isinstance(touch, dict) and (touch.get("L") or touch.get("R")):
                     side = "L" if touch.get("L") else "R"
                     self.mood.on_touch(side=side)
-                    print(f"[auto-v2] Touch detected!", flush=True)
+                    print("[auto-v2] Touch detected!", flush=True)
 
                 # Sound direction
                 sound = result.get("sound", result.get("sound_direction", {}))

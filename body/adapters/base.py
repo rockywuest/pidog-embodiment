@@ -7,7 +7,7 @@ The bridge uses the adapter to control whatever hardware is connected.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 
 class BodyAdapter(ABC):

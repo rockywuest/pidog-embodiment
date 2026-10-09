@@ -13,8 +13,6 @@ import signal
 import socket
 import threading
 import traceback
-import math
-from pathlib import Path
 
 # Audio config for HifiBerry DAC (auto-detect card number)
 os.environ["SDL_AUDIODRIVER"] = "alsa"

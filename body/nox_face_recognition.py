@@ -32,7 +32,6 @@ import sys
 import json
 import time
 import numpy as np
-from pathlib import Path
 
 try:
     import cv2

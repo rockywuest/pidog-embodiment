@@ -34,8 +34,12 @@ jobs:
           pip install -r body/requirements.txt || true
 
       - name: Lint with Ruff
+        # F/E9 (real defects: undefined names, unused imports, syntax) BLOCK the
+        # build — the 2026-10-09 sweep found 29 of them sitting behind `|| true`.
+        # The full style check stays advisory.
         run: |
           pip install ruff
+          ruff check . --select F,E9 --output-format=github
           ruff check . --output-format=github || true
 
       - name: Type check with mypy

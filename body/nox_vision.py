@@ -224,7 +224,7 @@ def verify_setup():
     if not os.path.isfile(MMPROJ_PATH):
         return f"projector not found: {MMPROJ_PATH}"
 
-    print(f"[vision] Setup OK:", flush=True)
+    print("[vision] Setup OK:", flush=True)
     print(f"  Binary:    {llama_bin}", flush=True)
     print(f"  Model:     {MODEL_PATH}", flush=True)
     print(f"  Projector: {MMPROJ_PATH}", flush=True)
@@ -234,7 +234,7 @@ def verify_setup():
 
 def main():
     """Main vision loop."""
-    print(f"[vision] Nox Vision Engine starting...", flush=True)
+    print("[vision] Nox Vision Engine starting...", flush=True)
 
     problem = verify_setup()
     if problem:
