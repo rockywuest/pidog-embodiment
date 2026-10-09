@@ -2,6 +2,11 @@
 Description=Nox Voice Loop v2 (PiDog)
 After=nox-body.service nox-bridge.service
 Requires=nox-body.service
+# A too-large Vosk model OOMs the whole Pi: systemd restarts the service, the
+# model loads again, the system thrashes until the SD card is pulled (issue
+# #45, a 1.4 GB model on a Pi 4). Give up after a few kills instead.
+StartLimitIntervalSec=300
+StartLimitBurst=4
 
 [Service]
 EnvironmentFile=/home/pidog/nox.env
@@ -11,6 +16,9 @@ WorkingDirectory=/home/pidog
 ExecStart=/usr/bin/python3 -u /home/pidog/nox_voice_loop_v2.py
 Restart=on-failure
 RestartSec=10
+# Kill the service, not the Pi, when a model does not fit (vision has the same)
+MemoryMax=700M
+MemoryHigh=600M
 Environment=PATH=/home/pidog/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHONUNBUFFERED=1
 Environment=SDL_AUDIODRIVER=alsa
