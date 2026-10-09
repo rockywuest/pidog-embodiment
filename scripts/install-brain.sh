@@ -40,6 +40,10 @@ if [[ ! -f /etc/default/nox-brain ]]; then
 # Same value as NOX_API_TOKEN in the robot's body/nox.env, if you set one there:
 #NOX_API_TOKEN=
 
+# Language the dog answers in: auto (the language you speak to it, default),
+# or always de / en / fr — pick the one the robot's Piper voice speaks.
+#NOX_LANG=auto
+
 # LLM backend — any OpenAI-compatible chat-completions endpoint.
 # Cloud (OpenAI): set the key, keep the default URL/model:
 #OPENAI_API_KEY=sk-...

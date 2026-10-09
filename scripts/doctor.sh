@@ -332,16 +332,35 @@ fi
 # ── BRAIN checks ──────────────────────────────────────────────────────────
 if [[ $IS_BRAIN -eq 1 ]]; then
   section "Brain — configuration"
-  if [[ -f /etc/default/nox-brain ]]; then
-    pass "/etc/default/nox-brain present"
-    if grep -qE '^[[:space:]]*PIDOG_HOST=' /etc/default/nox-brain; then
-      pass "PIDOG_HOST set ($(grep -E '^[[:space:]]*PIDOG_HOST=' /etc/default/nox-brain | head -1 | cut -d= -f2))"
+  # /etc/default/nox-brain is mode 600 (it may hold an API key), so without
+  # sudo grep cannot read it — that used to report "PIDOG_HOST not set" and
+  # then probe pidog.local, on a brain that was talking to its robot fine
+  # (issue #42). Fall back to the running service's own environment: same
+  # user, readable, and it is the value actually in use.
+  brain_cfg=/etc/default/nox-brain
+  pidog_host=""
+  pidog_host_src=""
+  if [[ -f "$brain_cfg" ]]; then
+    pass "$brain_cfg present"
+    if [[ -r "$brain_cfg" ]]; then
+      pidog_host="$(sed -n 's/^[[:space:]]*PIDOG_HOST=//p' "$brain_cfg" | tail -1)"
+      pidog_host_src="$brain_cfg"
     else
-      warn "PIDOG_HOST not set in /etc/default/nox-brain"
-      hint "set it to the robot's IP so the brain can reach the body on :${BRIDGE_PORT}"
+      brain_pid="$(systemctl show -p MainPID --value nox-brain 2>/dev/null)"
+      if [[ -n "$brain_pid" && "$brain_pid" != "0" && -r "/proc/$brain_pid/environ" ]]; then
+        pidog_host="$(tr '\0' '\n' < "/proc/$brain_pid/environ" | sed -n 's/^PIDOG_HOST=//p' | tail -1)"
+        pidog_host_src="the running nox-brain"
+      fi
+      [[ -z "$pidog_host_src" ]] && hint "$brain_cfg is readable by root only — run with sudo to check it"
+    fi
+    if [[ -n "$pidog_host" ]]; then
+      pass "PIDOG_HOST set ($pidog_host, from $pidog_host_src)"
+    elif [[ -n "$pidog_host_src" ]]; then
+      warn "PIDOG_HOST not set (checked $pidog_host_src)"
+      hint "set it in $brain_cfg to the robot's IP so the brain can reach the body on :${BRIDGE_PORT}"
     fi
   else
-    warn "/etc/default/nox-brain missing"
+    warn "$brain_cfg missing"
     hint "run: sudo ./scripts/install-brain.sh"
   fi
 
@@ -349,7 +368,6 @@ if [[ $IS_BRAIN -eq 1 ]]; then
   check_service nox-brain
 
   section "Brain — reach the body"
-  pidog_host="$(grep -E '^[[:space:]]*PIDOG_HOST=' /etc/default/nox-brain 2>/dev/null | head -1 | cut -d= -f2)"
   pidog_host="${pidog_host:-pidog.local}"
   if have curl; then
     if curl -s --max-time 5 "http://${pidog_host}:${BRIDGE_PORT}/status" >/dev/null 2>&1; then

@@ -259,6 +259,33 @@ PIPER_VOICE_DIRS = (
 )
 PREFERRED_PIPER_VOICE = "de_DE-thorsten-high"
 
+# What the dog says on its own (battery warnings) — issue #42 follow-up.
+SPOKEN = {
+    "battery_low": {"de": "Meine Batterie wird schwach.", "en": "My battery is getting low.",
+                    "fr": "Ma batterie devient faible."},
+    "battery_critical": {"de": "Batterie kritisch. Ich lege mich hin.",
+                         "en": "Battery critical. I'm lying down.",
+                         "fr": "Batterie critique. Je me couche."},
+}
+
+
+def body_language(env=None):
+    """NOX_LANG from body/nox.env, else the language of the Piper voice
+    (fr_FR-siwis-medium → fr), else German. A French voice reading German
+    sentences is barely understandable."""
+    env = os.environ if env is None else env
+    lang = (env.get("NOX_LANG") or "").strip().lower()
+    if lang in ("de", "en", "fr"):
+        return lang
+    voice = os.path.basename(env.get("PIPER_MODEL") or "")
+    if voice[:2].lower() in ("de", "en", "fr") and voice[2:3] in ("_", "-"):
+        return voice[:2].lower()
+    return "de"
+
+
+def spoken(key, env=None):
+    return SPOKEN[key][body_language(env)]
+
 
 def find_piper_voice(configured=None, dirs=PIPER_VOICE_DIRS, preferred=PREFERRED_PIPER_VOICE):
     """Pick the voice /speak uses: {"model": path|None, "reason": str, "voices": [...]}.

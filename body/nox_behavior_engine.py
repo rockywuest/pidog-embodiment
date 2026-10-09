@@ -34,6 +34,11 @@ import urllib.request
 from enum import Enum
 from collections import deque
 
+try:  # on the robot body/ is on sys.path; tests import it as a package
+    from nox_audio import spoken
+except ImportError:  # pragma: no cover - import path depends on the caller
+    from body.nox_audio import spoken
+
 # Optional memory
 try:
     import pidog_memory
@@ -489,13 +494,13 @@ class BehaviorEngine:
         if batt_v < BATTERY_CRITICAL_V and not self.critical_battery_mode:
             self.critical_battery_mode = True
             self.low_battery_mode = True
-            self.daemon({"cmd": "speak", "text": "Batterie kritisch. Ich lege mich hin."})
+            self.daemon({"cmd": "speak", "text": spoken("battery_critical")})
             self.daemon({"cmd": "move", "action": "lie", "_internal": True})
             self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "breath", "bps": 0.3})
             self._request_transition(BehaviorState.REST)
         elif batt_v < BATTERY_LOW_V and not self.low_battery_mode:
             self.low_battery_mode = True
-            self.daemon({"cmd": "speak", "text": "Meine Batterie wird schwach."})
+            self.daemon({"cmd": "speak", "text": spoken("battery_low")})
             self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
             self._request_transition(BehaviorState.REST)
         if batt_v > BATTERY_CRITICAL_V + 0.4:
