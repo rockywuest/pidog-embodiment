@@ -367,7 +367,7 @@ def test_sox_uses_the_default_output_when_no_device_is_known(mp3):
 
 # ─── capture side: which card has the microphone (issue #45) ───
 
-from body.nox_audio import find_capture_device, list_capture_cards  # noqa: E402
+from body.nox_audio import find_capture_device  # noqa: E402
 
 ARECORD_VOICEHAT = """**** List of CAPTURE Hardware Devices ****
 card 2: sndrpigooglevoi [snd_rpi_googlevoicehat_soundcar], device 0: Google voiceHAT SoundCard HiFi voicehat-hifi-0 [...]
