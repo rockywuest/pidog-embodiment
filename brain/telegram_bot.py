@@ -25,7 +25,6 @@ import time
 import base64
 import urllib.request
 import urllib.error
-import tempfile
 from threading import Thread
 
 # ─── Config ───
@@ -302,7 +301,7 @@ def cmd_combo(chat_id, args):
     if "error" in result:
         return send_message(chat_id, f"❌ {result['error']}")
     
-    return send_message(chat_id, f"🎭 Combo executed!")
+    return send_message(chat_id, "🎭 Combo executed!")
 
 
 def cmd_help(chat_id, args):
@@ -390,7 +389,7 @@ def main():
         print("ERROR: Set TELEGRAM_BOT_TOKEN environment variable")
         sys.exit(1)
     
-    print(f"🤖 Nox Telegram Bot starting...")
+    print("🤖 Nox Telegram Bot starting...")
     print(f"   Body: {BODY_URL}")
     print(f"   Allowed users: {ALLOWED_USERS or 'NONE — set TELEGRAM_ALLOWED_USERS, the bot refuses every command until then'}")
     

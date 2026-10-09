@@ -18,7 +18,6 @@ import time
 import base64
 import socket
 import threading
-import traceback
 import urllib.request
 import signal
 
@@ -36,7 +35,6 @@ except Exception as _e:
     _HAS_MEMORY = False
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nox_security import (BridgeSecurity, validate_head, validate_name,  # noqa: E402

@@ -13,13 +13,11 @@ Runs on Nox's Pi 5 (brain side).
 """
 
 import os
-import sys
 import json
 import queue
 import re
 import threading
 import time
-import base64
 import socket
 import urllib.request
 import urllib.error
@@ -216,16 +214,29 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
         "response_format": {"type": "json_object"},  # Force JSON output
     }
     
-    body = json.dumps(data).encode()
-    req = urllib.request.Request(OPENAI_URL, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-    if OPENAI_API_KEY:
-        req.add_header("Authorization", f"Bearer {OPENAI_API_KEY}")
-    
-    try:
+    def _post(payload):
+        req = urllib.request.Request(OPENAI_URL, data=json.dumps(payload).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        if OPENAI_API_KEY:
+            req.add_header("Authorization", f"Bearer {OPENAI_API_KEY}")
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
             result = json.loads(resp.read().decode())
             return result.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    try:
+        try:
+            return _post(data)
+        except urllib.error.HTTPError as e:
+            # response_format is OpenAI's dialect; older Ollama / llama.cpp
+            # servers answer 400 to it — then the whole LLM path looked dead
+            # although the model was fine (2026-10-09 sweep). Ask once more
+            # without it; the system prompt still demands JSON.
+            if e.code != 400 or "response_format" not in data:
+                raise
+            retry = {k: v for k, v in data.items() if k != "response_format"}
+            print("[brain] LLM endpoint rejected response_format (HTTP 400) — "
+                  "retrying without it", flush=True)
+            return _post(retry)
     except Exception as e:
         # urllib wraps timeouts in URLError(reason=socket.timeout)
         reason = getattr(e, "reason", e)
@@ -250,7 +261,7 @@ def parse_response(text):
         pass
     
     # Plain text response
-    return {"speak": text, "actions": [], "emotion": "neutral"}
+    return {"speak": text, "actions": [], "emotion": "neutral", "_no_json": True}
 
 
 # ─── Voice Processing ───
@@ -302,6 +313,11 @@ def process_voice_intelligent(msg):
         
         speak_text = parsed.get("speak", response_text)
         actions = parsed.get("actions", [])
+        if parsed.get("_no_json") and not actions:
+            # A small model that ignored the JSON format would make the dog
+            # recite "sit down" instead of sitting. The keyword parser still
+            # understands the user's own words — act on those.
+            actions = parse_simple_command(text)["actions"]
         rgb = parsed.get("rgb", None)
         head = parsed.get("head", None)
         emotion = parsed.get("emotion", "neutral")
@@ -471,7 +487,10 @@ def process_voice_simple(msg):
 
 # ─── Main Loop ───
 # ─── Push Server (receives voice from bridge, zero latency) ───
-PUSH_PORT = 8889
+# Same key the bridge uses to reach us. NOTE: brain/nox_voice_relay.py (the
+# legacy 3-tier relay, not installed by install-brain.sh) binds 8889 too — run
+# one or the other, or give this one a different port.
+PUSH_PORT = int(os.environ.get("BRAIN_CALLBACK_PORT", "8889"))
 # Filled by the push server, drained by the main loop while it waits between
 # inbox polls — so a pushed command runs at once instead of never: this used to
 # be a plain list nobody read, and every command waited for the 5 s inbox poll
@@ -599,7 +618,7 @@ def main():
                         print(f"[brain] Body still unreachable. Retrying in {CIRCUIT_RETRY_INTERVAL}s", flush=True)
                     continue
                 else:
-                    print(f"[brain] Body reconnected! Resuming polling.", flush=True)
+                    print("[brain] Body reconnected! Resuming polling.", flush=True)
                     circuit_open = False
                     consecutive_errors = 0
             
