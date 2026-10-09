@@ -349,6 +349,30 @@ out of the service's reach: `sudo cp -r /root/.piper_models ~/ && sudo chown -R 
 > shell mangles the JSON before curl ever sends it — the bridge then answers
 > HTTP 400 with what it actually received, so you can see the mangling.
 
+## 🎤 Talking to the Dog (voice input)
+
+The `nox-voice` service (installed by default) listens on a **USB microphone**
+for the wake word — "Nox" — and sends what you say to the brain, which answers
+and acts. It stays off until a Vosk speech model is installed:
+
+```bash
+# 1. On the robot: a model for YOUR language decides what the dog understands.
+#    Browse https://alphacephei.com/vosk/models — small models fit the Pi 4.
+mkdir -p ~/vosk-models && cd ~/vosk-models
+wget https://alphacephei.com/vosk/models/vosk-model-small-fr-0.22.zip && unzip vosk-model-small-*.zip
+
+# 2. Point the service at the unzipped FOLDER, in body/nox.env:
+#    VOSK_MODEL_PATH=/home/<you>/vosk-models/vosk-model-small-fr-0.22
+sudo systemctl restart nox-voice
+journalctl -u nox-voice -n 20 --no-pager    # expect the model to load, then "listening"
+
+# 3. Say "Nox" ... then your command: "Assieds-toi !", "Sitz!", "sit down"
+```
+
+Without a model (or without a USB mic) `nox-voice` exits cleanly and voice
+input stays off — `./scripts/doctor.sh` tells you which of the two is missing.
+Text commands via `POST /voice/input` work either way.
+
 ## 📡 API Reference
 
 ### Bridge Endpoints (Body — Port 8888)

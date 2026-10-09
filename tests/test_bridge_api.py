@@ -207,3 +207,29 @@ def test_sensors_handles_an_unreadable_battery(server_port, monkeypatch):
     assert body["battery"]["readable"] is False
     assert body["battery"]["percent"] is None
     assert body["battery"]["charging"] is False
+
+
+def test_voice_respond_forwards_a_speak_failure(server_port, monkeypatch):
+    # /voice/respond answered ok:true unconditionally — the silent-ok pattern
+    # of #35, one endpoint over (found in the 2026-10-09 repo sweep).
+    import json as _json
+    import urllib.request as _rq
+    import body.nox_brain_bridge as _b
+
+    monkeypatch.setattr(_b, "send_to_daemon", lambda p, timeout=30: {
+        "ok": False, "error": "piper voice model not found: /x.onnx"})
+    req = _rq.Request(f"http://127.0.0.1:{server_port}/voice/respond",
+                      data=_json.dumps({"text": "Hallo"}).encode(),
+                      headers={"Content-Type": "application/json"})
+    with _rq.urlopen(req, timeout=10) as r:
+        body = _json.loads(r.read())
+    assert body["ok"] is False and "voice model" in body["error"]
+
+
+def test_vosk_model_path_is_documented_where_the_service_reads_it():
+    # The nox-voice unit loads body/nox.env; doctor says "set VOSK_MODEL_PATH"
+    # — so the example env must say how (issue #45).
+    with open("body/nox.env.example") as f:
+        env = f.read()
+    assert "VOSK_MODEL_PATH" in env and "alphacephei.com/vosk/models" in env
+    assert "NOX_FACE_DB_DIR" in env and "PIDOG_MEMORY_DIR" in env
