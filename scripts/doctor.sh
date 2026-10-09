@@ -298,7 +298,8 @@ PY
     pass "Vosk model present ($(basename "$vosk_model"))"
   else
     warn "no Vosk model — voice input stays off (nox-voice exits cleanly)"
-    hint "optional: download from https://alphacephei.com/vosk/models, set VOSK_MODEL_PATH"
+    hint "download one for YOUR language from https://alphacephei.com/vosk/models, unzip it,"
+    hint "set VOSK_MODEL_PATH=<unzipped folder> in body/nox.env, then: sudo systemctl restart nox-voice"
   fi
 
   section "Body — local vision (SmolVLM, optional)"

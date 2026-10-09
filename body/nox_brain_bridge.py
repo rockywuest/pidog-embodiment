@@ -820,9 +820,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         "text": text,
                         "ts": time.time()
                     })
-                # Speak it
-                send_to_daemon({"cmd": "speak", "text": text})
-                self._send_json({"ok": True})
+                # Speak it — and forward the daemon's verdict: a missing voice
+                # model or piper binary used to vanish behind an unconditional
+                # ok:true here, the same silent-ok pattern as #35.
+                r = send_to_daemon({"cmd": "speak", "text": text}, timeout=15)
+                if isinstance(r, dict) and r.get("error") and "ok" not in r:
+                    r = {"ok": False, **r}
+                self._send_json(r)
             else:
                 self._send_json({"error": "no text"}, 400)
         
