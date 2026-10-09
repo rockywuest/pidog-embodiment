@@ -65,7 +65,7 @@ class Dog:
             self.posture = action
         self.log(ACTION_FACES.get(action, f"🐕 *{action}*"))
         time.sleep(0.2)  # a pretend robot still takes a moment
-        return {"ok": True, "results": [{"ok": True, "action": action, "steps": steps}]}
+        return {"ok": True, "action": action, "steps": steps}
 
     def status(self):
         return {"ok": True, "mock": True, "battery_v": 7.9,
@@ -128,16 +128,17 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         body = self._read()
         dog = self.dog
-        if path in ("/action", "/move"):
-            action = body.get("action") or (body.get("actions") or [None])[0]
-            if not action:
-                self._json({"ok": False, "error": "empty action"}, 400)
+        if path == "/action":
+            actions = body.get("actions") or ([body["action"]] if body.get("action") else [])
+            if not actions:
+                self._json({"ok": False, "error": "empty action",
+                            "valid_actions": VALID_ACTIONS}, 400)
                 return
-            results = [dog.act(a, body.get("steps", 3))
-                       for a in (body.get("actions") or [action])]
-            ok = all(r["ok"] for r in results)
-            self._json(results[0] if len(results) == 1 else {"ok": ok, "results": results},
-                       200 if ok else 400)
+            # Exactly the real bridge's shape — always {ok, results}, HTTP 200,
+            # even for one action (clients built against the mock must not
+            # break on the real dog; review finding on #50).
+            results = [dog.act(a, body.get("steps", 3)) for a in actions]
+            self._json({"ok": all(r["ok"] for r in results), "results": results})
         elif path == "/speak":
             text = (body.get("text") or "").strip()
             if not text:

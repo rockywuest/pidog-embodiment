@@ -84,3 +84,24 @@ def test_voice_input_says_it_has_no_brain(mock_port):
 def test_install_sh_parses():
     import subprocess
     assert subprocess.run(["bash", "-n", "install.sh"]).returncode == 0
+
+
+def test_action_shape_matches_the_real_bridge(mock_port):
+    """Always {ok, results: [...]}, flat per-action entries — single AND multi."""
+    def post(payload):
+        req = urllib.request.Request(f"http://127.0.0.1:{mock_port}/action",
+                                     data=json.dumps(payload).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    single = post({"action": "sit"})
+    assert single["ok"] is True
+    assert single["results"] == [{"ok": True, "action": "sit", "steps": 3}]
+
+    multi = post({"actions": ["sit", "stand"]})
+    assert [r["action"] for r in multi["results"]] == ["sit", "stand"]
+    assert all("results" not in r for r in multi["results"])  # no nesting
+
+    mixed = post({"actions": ["sit", "backflip"]})
+    assert mixed["ok"] is False and mixed["results"][1]["ok"] is False
