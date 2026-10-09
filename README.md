@@ -66,6 +66,7 @@ Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI assistant) and [
 - **🧠 Behavior Engine** — 6-state FSM (Idle, Patrol, Investigate, Alert, Play, Rest) with mood system and obstacle avoidance
 - **🗣️ Natural Voice Control** — Speak naturally in any language, LLM understands intent and maps to actions
 - **🔌 MCP Server (NEW)** — the whole robot as tools for Claude Code, Claude Desktop or any MCP client: *"take a photo and tell me what you see"* — zero extra dependencies
+- **🧪 No hardware needed to try it** — `./install.sh --mock` runs a pretend dog on localhost; point the brain or the MCP server at it
 - **👤 Face Recognition** — SCRFD detection + ArcFace recognition, register and identify people
 - **🎭 Expression System** — 10 emotions (happy, sad, excited, curious, alert...) combining movement + LEDs + sound + speech
 - **🤖 Smart Movement** — Servo smoothing (EMA filter + easing), semantic movement (distance/angle-based), PWM auto-disable
@@ -128,6 +129,20 @@ Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
 > it starts fine but logs connection errors.
 
 ### Installation
+
+**The short way** — one script detects the role (robot vs. brain), asks for the
+other machine's address and sets everything up:
+
+```bash
+git clone https://github.com/rockywuest/pidog-embodiment.git && cd pidog-embodiment
+sudo ./install.sh          # on the robot AND on the brain machine
+# No robot? A dog made of log lines on :8888 — works with the MCP server too:
+./install.sh --mock
+```
+
+(On the robot, install SunFounder's pidog SDK first — see the manual steps.)
+
+**The manual way**, step by step:
 
 ```bash
 # Clone the repo
