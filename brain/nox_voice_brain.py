@@ -86,7 +86,9 @@ class ConversationState:
         
         user_content = current_input
         if context:
-            user_content = f"[Kontext: {context}]\n\nBenutzer sagt: {current_input}"
+            # English like the system prompt; the language rule there decides
+            # the reply. A German wrapper pulled French requests to German.
+            user_content = f"[Context: {context}]\n\nUser says: {current_input}"
         
         messages.append({"role": "user", "content": user_content})
         return messages

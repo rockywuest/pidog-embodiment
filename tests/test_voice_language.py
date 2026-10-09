@@ -79,3 +79,9 @@ def test_body_speaks_the_language_of_its_voice(env, lang):
 def test_battery_warning_in_french_with_a_french_voice():
     env = {"PIPER_MODEL": "/v/fr_FR-siwis-medium.onnx"}
     assert audio.spoken("battery_critical", env) == "Batterie critique. Je me couche."
+
+
+def test_context_wrapper_is_not_german(monkeypatch):
+    vb = load_brain(monkeypatch)
+    msgs = vb.ConversationState().get_messages("Qu'est-ce que tu vois ?", "Battery: 8.0V")
+    assert msgs[-1]["content"] == "[Context: Battery: 8.0V]\n\nUser says: Qu'est-ce que tu vois ?"
