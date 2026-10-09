@@ -15,6 +15,7 @@ set -u
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BODY_DIR="$REPO_DIR/body"
+RUN_USER_HINT="${SUDO_USER:-$USER}"
 BRIDGE_PORT="${PIDOG_BRIDGE_PORT:-8888}"
 
 # Under sudo, $HOME is /root: llama.cpp, the models and the voices all looked
@@ -130,9 +131,13 @@ if [[ $IS_BODY -eq 1 ]]; then
 
   section "Body — configuration"
   if [[ -f "$BODY_DIR/nox.env" ]]; then
-    if grep -q '[<>]' "$BODY_DIR/nox.env"; then
-      fail "body/nox.env still contains <PLACEHOLDER> values"
-      hint "edit BRAIN_HOST (127.0.0.1 if brain+body share one machine)"
+    # Comments don't count: our own example ships "/home/<you>/..." hints in
+    # comments, which used to FAIL every fresh install (issue #45 follow-up).
+    placeholder_lines="$(grep -nE '^[^#]*[<>]' "$BODY_DIR/nox.env" | head -3)"
+    if [[ -n "$placeholder_lines" ]]; then
+      fail "body/nox.env still contains <PLACEHOLDER> values outside comments:"
+      while IFS= read -r line; do hint "$line"; done <<< "$placeholder_lines"
+      hint "replace each <...> with your real value (e.g. /home/$RUN_USER_HINT/...)"
     elif grep -qE '^BRAIN_HOST=' "$BODY_DIR/nox.env"; then
       pass "body/nox.env present, BRAIN_HOST set ($(grep -E '^BRAIN_HOST=' "$BODY_DIR/nox.env" | head -1 | cut -d= -f2))"
     else
@@ -300,8 +305,15 @@ PY
   fi
 
   section "Body — voice input (Vosk STT, optional)"
+  # ONE model check — a stale duplicate here read the shell env instead of
+  # nox.env and printed PASS and "no Vosk model" at once (issue #45 follow-up).
   if [[ -d "$vosk_model_dir" ]]; then
     pass "Vosk model present ($(basename "$vosk_model_dir"))"
+  else
+    warn "no Vosk model — voice input stays off (nox-voice exits cleanly)"
+    hint "download one for YOUR language from https://alphacephei.com/vosk/models, unzip it,"
+    hint "e.g. VOSK_MODEL_PATH=/home/$USER/vosk-models/vosk-model-small-fr-0.22 in body/nox.env,"
+    hint "then: sudo systemctl restart nox-voice. Small models only — a 1 GB+ model OOMs a Pi 4."
   fi
   mic_line="$(arecord -l 2>/dev/null | grep -E '^card [0-9]+:' | head -1)"
   if [[ -n "$mic_line" ]]; then
@@ -310,15 +322,6 @@ PY
     warn "no capture device — voice input needs a microphone"
     hint "plug in a USB mic, or set MIC_DEVICE in body/nox.env; check: arecord -l"
   fi
-  vosk_model="${VOSK_MODEL_PATH:-$HOME/vosk-models/vosk-model-small-de-0.15}"
-  if [[ -d "$vosk_model" ]]; then
-    pass "Vosk model present ($(basename "$vosk_model"))"
-  else
-    warn "no Vosk model — voice input stays off (nox-voice exits cleanly)"
-    hint "download one for YOUR language from https://alphacephei.com/vosk/models, unzip it,"
-    hint "set VOSK_MODEL_PATH=<unzipped folder> in body/nox.env, then: sudo systemctl restart nox-voice"
-  fi
-
   section "Body — local vision (SmolVLM, optional)"
   if [[ -x "$HOME/llama.cpp/build/bin/llama-mtmd-cli" || -x "$HOME/llama.cpp/build/bin/llama-llava-cli" ]]; then
     pass "llama.cpp built"
