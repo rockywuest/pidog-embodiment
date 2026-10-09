@@ -405,3 +405,23 @@ def test_no_capture_device_stays_none():
 def test_an_explicit_mic_device_wins():
     r = find_capture_device("plughw:9,0", runner=AplayOutput(ARECORD_VOICEHAT))
     assert r["device"] == "plughw:9,0" and "nox.env" in r["reason"]
+
+
+def test_watch_stderr_drains_live_and_keeps_the_tail():
+    # An undrained stderr PIPE stalls arecord once 64 KB of "overrun!!!"
+    # pile up — the drain thread must consume while the capture runs (#51).
+    import io
+    import time as _time
+
+    from body.nox_audio import watch_stderr
+
+    class P:
+        stderr = io.BytesIO(b"overrun!!!\n" * 5000 + b"arecord: fatal: device gone\n")
+
+    lines = watch_stderr(P(), keep=3)
+    for _ in range(50):
+        if len(lines) == 3 and "device gone" in lines[-1]:
+            break
+        _time.sleep(0.05)
+    assert list(lines)[-1] == "arecord: fatal: device gone"
+    assert len(lines) == 3  # bounded, not 5001 lines in memory

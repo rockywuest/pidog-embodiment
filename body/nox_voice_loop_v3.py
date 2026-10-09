@@ -301,7 +301,11 @@ def main():
     import webrtcvad
     vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
 
-    # Audio input via arecord
+    # Audio input via arecord. No microphone is a clean, explained stop —
+    # not a TypeError from Popen (review of #51).
+    if not CAPTURE_DEVICE:
+        print(f"[voice-v3] No microphone: {_mic['reason']}. Voice input stays off.", flush=True)
+        return
     print("[voice-v3] Starting audio capture...", flush=True)
     process = subprocess.Popen(
         ["arecord", "-D", CAPTURE_DEVICE, "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw"],

@@ -41,7 +41,7 @@ SAMPLE_RATE = 16000
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nox_audio import find_capture_device  # noqa: E402
+from nox_audio import find_capture_device, watch_stderr  # noqa: E402
 
 _mic = find_capture_device(os.environ.get("MIC_DEVICE"))
 CAPTURE_DEVICE = _mic["device"]
@@ -280,6 +280,7 @@ def main():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
+    stderr_lines = watch_stderr(process)  # drained live — an undrained PIPE stalls arecord
 
     # Signal we're listening (no TTS — it kills the audio pipeline)
     try:
@@ -297,9 +298,9 @@ def main():
             if len(data) == 0:
                 # arecord ended — say WHY, and exit non-zero so systemd retries
                 # (a mic that is still enumerating usually works seconds later).
-                err = (process.stderr.read() or b"").decode("utf-8", "replace").strip()
+                time.sleep(0.2)  # let the drain thread catch the last lines
                 print(f"[voice-v2] audio capture ended: "
-                      f"{err.splitlines()[-1] if err else 'no error output'} "
+                      f"{stderr_lines[-1] if stderr_lines else 'no error output'} "
                       f"(device {CAPTURE_DEVICE})", flush=True)
                 sys.exit(1)
 

@@ -468,7 +468,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not b64:
                     self._send_json({"ok": False, "error": result.get("error", "no photo taken")}, 503)
                 else:
-                    img = base64.b64decode(b64)
+                    try:
+                        img = base64.b64decode(b64)
+                    except (ValueError, TypeError) as e:
+                        self._send_json({"ok": False, "error": f"photo encoding error: {e}"}, 500)
+                        return
                     self.send_response(200)
                     self.send_header("Content-Type", "image/jpeg")
                     self.send_header("Content-Length", str(len(img)))

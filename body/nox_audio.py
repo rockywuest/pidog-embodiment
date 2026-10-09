@@ -205,6 +205,27 @@ def find_capture_device(configured=None, runner=None):
             "reason": f"only capture card: {card['index']}:{card['id']}"}
 
 
+
+def watch_stderr(process, keep=20):
+    """Drain a child's stderr in the background; returns a deque of the last lines.
+
+    arecord writes "overrun!!!" to stderr under load. Leaving the PIPE undrained
+    until EOF lets it fill after ~64 KB — arecord then blocks on write and the
+    capture stalls: the dog goes deaf hours in, silently (review of #51).
+    """
+    from collections import deque
+    lines = deque(maxlen=keep)
+
+    def _drain():
+        for raw in process.stderr:
+            line = raw.decode("utf-8", "replace").strip()
+            if line:
+                lines.append(line)
+
+    threading.Thread(target=_drain, daemon=True).start()
+    return lines
+
+
 class AplayMusic:
     """Minimal stand-in for robot_hat's ``Music``, playing via command line tools.
 
