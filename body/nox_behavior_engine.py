@@ -644,7 +644,7 @@ class BehaviorEngine:
                             else:
                                 if self.mood.people_nearby:
                                     self.mood.on_person_gone()
-                    except Exception as e:
+                    except Exception:
                         pass  # Camera/bridge not ready
                 time.sleep(120)
             except Exception:
@@ -720,12 +720,12 @@ class BehaviorEngine:
         if vision_data:
             desc = (vision_data.get('description') or '').lower()
             if mentions_person(desc):
-                print(f'[behavior] Vision: person detected → INVESTIGATE', flush=True)
+                print('[behavior] Vision: person detected → INVESTIGATE', flush=True)
                 self._transition('investigate')
                 return
             if any(w in desc for w in ('blocked', 'obstacle', 'wall', 'furniture', 'chair')):
                 if 'clear' not in desc:
-                    print(f'[behavior] Vision: obstacle detected → scan', flush=True)
+                    print('[behavior] Vision: obstacle detected → scan', flush=True)
                     # Don't transition, let ultrasonic handle avoidance
 
         now = time.time()

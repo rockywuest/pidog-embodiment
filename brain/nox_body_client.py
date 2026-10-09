@@ -14,7 +14,6 @@ Used by Clawdbot (via shell commands or imported as module).
 
 import json
 import base64
-import time
 import os
 import sys
 import urllib.request

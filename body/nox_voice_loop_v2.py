@@ -23,7 +23,6 @@ import struct
 import math
 import socket
 import subprocess
-import threading
 import urllib.request
 
 os.environ["SDL_AUDIODRIVER"] = "alsa"
@@ -79,7 +78,7 @@ def amplify_audio(data, gain=SOFTWARE_GAIN):
             v = int(samples[i] * gain)
             samples[i] = max(-32768, min(32767, v))
         return samples.tobytes()
-    except Exception as e:
+    except Exception:
         # If amplification fails, return original data
         return data
 # ─── Energy Gate (v2.2) ───
@@ -344,7 +343,7 @@ def main():
                 cleaned, had_wake_word = fuzzy_wake_word_check(text)
 
                 if not state.in_conversation and not had_wake_word:
-                    print(f"[voice-v2] No wake word detected. Ignoring.", flush=True)
+                    print("[voice-v2] No wake word detected. Ignoring.", flush=True)
                     continue
 
                 # Activate conversation mode
@@ -380,7 +379,7 @@ def main():
                 # Echo protection: suppress audio for estimated brain response + TTS time
                 # Brain takes ~2s, TTS takes ~3-5s → suppress for 8s
                 _speaking_until = time.time() + 8.0
-                print(f"[voice-v2] Echo suppression active for 8s", flush=True)
+                print("[voice-v2] Echo suppression active for 8s", flush=True)
 
                 time.sleep(0.5)
                 set_rgb(128, 0, 255, "breath", 0.8)

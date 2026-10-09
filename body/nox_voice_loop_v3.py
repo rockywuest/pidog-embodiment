@@ -14,7 +14,6 @@ Pipeline: Mic → arecord 16kHz → Amplify → VAD speech detection → Buffer 
 """
 
 import os
-import sys
 import json
 import time
 import struct
@@ -26,7 +25,6 @@ import threading
 import urllib.request
 import io
 import wave
-import tempfile
 
 os.environ["SDL_AUDIODRIVER"] = "alsa"
 
@@ -521,7 +519,7 @@ def process_transcription(text):
 
     # Smart echo suppression
     _speaking_until = time.time() + 3.0
-    print(f"[voice-v3] Echo suppression: 3s initial (bridge extends for TTS)", flush=True)
+    print("[voice-v3] Echo suppression: 3s initial (bridge extends for TTS)", flush=True)
     threading.Thread(target=_echo_monitor, daemon=True).start()
 
     time.sleep(0.3)

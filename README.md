@@ -232,7 +232,6 @@ place:
 | What | Where | Setting |
 |---|---|---|
 | Body → brain (callbacks, voice) | `body/nox.env` | `BRAIN_HOST`, `BRAIN_CALLBACK_PORT` |
-| Brain → body (poller, client) | `brain/services/nox-poller.service` | `PIDOG_HOST`, `PIDOG_BRIDGE_PORT` |
 | Brain voice service | `/etc/default/nox-brain` (created by `install-brain.sh`) | `PIDOG_HOST` |
 | Examples and CLI | environment or argument | `PIDOG_HOST`, or `./scripts/deploy-body.sh user@host` |
 
@@ -565,7 +564,7 @@ the robot, take photos and play sounds. Treat it as a LAN-only service.
 
 | | Status |
 |---|---|
-| Bridge authentication | ✅ optional: set `NOX_API_TOKEN` in `body/nox.env` and every request from another machine needs `Authorization: Bearer <token>`. Off by default so existing setups keep working. The robot's own services (localhost) are exempt; requests through a tunnel/proxy on the robot are not. `/status` → `security.auth` shows `on`/`off`. |
+| Bridge authentication | ✅ optional: set `NOX_API_TOKEN` in `body/nox.env` and every request from another machine needs `Authorization: Bearer <token>`. Off by default so existing setups keep working. The robot's own services (localhost) are exempt; requests through a tunnel/proxy on the robot are not. `/status` → `security.auth` shows `on`/`off`. Treat the token like a password: the API allows any origin (CORS `*`), so the token is the only thing standing between a browser on your LAN and the robot. |
 | Rate limiting | ✅ 600 requests/minute per remote address (`NOX_RATE_LIMIT`, `0` = off), answered with `429` + `Retry-After` |
 | Input validation | ✅ unknown actions and malformed JSON are rejected loudly; `/rgb`, `/head`, `/speak` and `/face/register` check their values and answer `400` with the reason |
 | Secrets in code | ✅ none — everything comes from the environment, enforced by `tests/test_no_private_data.py` |
@@ -594,7 +593,6 @@ pidog-embodiment/
 │   ├── nox_body_client.py         # Python client for bridge API (37 functions)
 │   ├── nox_voice_brain.py         # LLM-powered voice processing
 │   ├── nox_voice_relay.py         # Voice relay for remote STT
-│   ├── nox_body_poller.py         # Async body status poller
 │   ├── telegram_bot.py            # Telegram remote control
 │   ├── requirements.txt
 │   └── services/
