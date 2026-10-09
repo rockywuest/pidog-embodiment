@@ -65,6 +65,7 @@ Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI assistant) and [
 - **👁️ Local Vision (NEW)** — SmolVLM-256M runs on-device via llama.cpp. Scene understanding, person/obstacle detection, no cloud needed
 - **🧠 Behavior Engine** — 6-state FSM (Idle, Patrol, Investigate, Alert, Play, Rest) with mood system and obstacle avoidance
 - **🗣️ Natural Voice Control** — Speak naturally in any language, LLM understands intent and maps to actions
+- **🔌 MCP Server (NEW)** — the whole robot as tools for Claude Code, Claude Desktop or any MCP client: *"take a photo and tell me what you see"* — zero extra dependencies
 - **👤 Face Recognition** — SCRFD detection + ArcFace recognition, register and identify people
 - **🎭 Expression System** — 10 emotions (happy, sad, excited, curious, alert...) combining movement + LEDs + sound + speech
 - **🤖 Smart Movement** — Servo smoothing (EMA filter + easing), semantic movement (distance/angle-based), PWM auto-disable
@@ -373,6 +374,32 @@ Without a model (or without a USB mic) `nox-voice` exits cleanly and voice
 input stays off — `./scripts/doctor.sh` tells you which of the two is missing.
 Text commands via `POST /voice/input` work either way.
 
+## 🔌 Claude as the Brain (MCP)
+
+`brain/nox_mcp_server.py` exposes the robot as **MCP tools** — photo (the model
+really sees the image), speak, move, emotions, sensors, emergency stop. Any MCP
+client becomes the dog's brain; `nox-brain` is not needed for this.
+
+```bash
+# Claude Code (on your laptop — the robot just needs to be reachable):
+claude mcp add pidog --env PIDOG_HOST=<robot-ip-or-name> --   python3 /path/to/pidog-embodiment/brain/nox_mcp_server.py
+# then:  "take a photo, tell me what you see, and if a person is there, wag your tail"
+```
+
+Claude Desktop (`claude_desktop_config.json`) and other MCP clients:
+
+```json
+{"mcpServers": {"pidog": {
+  "command": "python3",
+  "args": ["/path/to/pidog-embodiment/brain/nox_mcp_server.py"],
+  "env": {"PIDOG_HOST": "<robot-ip-or-name>", "NOX_API_TOKEN": "<if auth is on>"}
+}}}
+```
+
+Tools: `dog_photo` · `dog_vision` · `dog_speak` · `dog_action` · `dog_look_at` ·
+`dog_expression` · `dog_rgb` · `dog_sensors` · `dog_status` · `dog_behavior`
+(incl. `emergency_stop`). Zero dependencies — plain stdlib, stdio transport.
+
 ## 📡 API Reference
 
 ### Bridge Endpoints (Body — Port 8888)
@@ -617,6 +644,7 @@ pidog-embodiment/
 │   ├── nox_body_client.py         # Python client for bridge API (37 functions)
 │   ├── nox_voice_brain.py         # LLM-powered voice processing
 │   ├── nox_voice_relay.py         # Voice relay for remote STT
+│   ├── nox_mcp_server.py          # The robot as MCP tools (Claude Code/Desktop, OpenClaw)
 │   ├── telegram_bot.py            # Telegram remote control
 │   ├── requirements.txt
 │   └── services/
