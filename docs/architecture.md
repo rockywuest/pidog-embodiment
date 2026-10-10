@@ -58,6 +58,10 @@ One systemd unit per component; `scripts/install-body.sh` /
 5. **LAN only.** No ports exposed to the internet; remote access via
    Tailscale (see [remote-access.md](remote-access.md)).
 
+6. **MCP is a second brain path.** `brain/nox_mcp_server.py` exposes the same
+   bridge as Model Context Protocol tools — Claude Code/Desktop (or any MCP
+   client) drives the body directly, no `nox-brain` service required.
+
 ## Message flow
 
 **Brain → body** (REST, see README API reference):
