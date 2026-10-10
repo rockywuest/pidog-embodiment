@@ -106,7 +106,7 @@ Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
 | `nox-bridge` | Body (Pi 4) | HTTP 8888 | REST API + Behavior Engine (FSM) |
 | `nox-vision` | Body (Pi 4) | — | Local scene analysis (SmolVLM-256M via llama.cpp) |
 | `nox-wifi-watchdog` | Body (Pi 4) | — | Rejoins WLAN after dropouts (watchdog script) |
-| `nox-voice` | Body (Pi 4) | — | Wake word + Speech-to-Text (faster-whisper) |
+| `nox-voice` | Body (Pi 4) | — | Wake word + Speech-to-Text (Vosk, wake word "Nox") |
 
 ## 🚀 Quick Start
 
@@ -430,7 +430,7 @@ All 31 endpoints the bridge actually serves — see `body/nox_brain_bridge.py`.
 | GET | `/status` | Battery, uptime, behavior state, security settings, last speech result |
 | GET | `/sensors` | Ultrasonic distance, touch, battery, obstacle flags |
 | GET | `/capabilities` | Valid actions, endpoints, feature flags |
-| GET | `/selftest` | End-to-end health verdict (I2C, servos, battery, voice, vision) |
+| GET | `/selftest` | Servo/daemon self-test — physically moves the dog; reports dead threads, queue, audio |
 | GET | `/photo` | Take a photo — JSON with `photo_b64` + faces; `?format=jpeg` returns the image itself |
 | GET | `/look` | Photo + face detection + scene analysis |
 | GET | `/vision` | Latest on-device SmolVLM scene description |
@@ -439,7 +439,7 @@ All 31 endpoints the bridge actually serves — see `body/nox_brain_bridge.py`.
 | GET | `/faces` | Known faces in the recognition DB |
 | GET | `/scan` | Ultrasonic distance scan |
 | GET | `/scan/sweep` | Panoramic head-sweep scan |
-| GET | `/memory/recent`, `/memory/stats` | Long-term memory (also POST to add) |
+| GET | `/memory/recent`, `/memory/stats` | Long-term memory reads (POST accepted too) |
 | GET | `/voice/inbox` | Pending voice messages (polling reads clear it) |
 | GET/POST | `/voice/echo_until` | TTS echo-suppression window |
 | POST | `/speak` | TTS; `"blocking": true` waits and reports the real outcome |
