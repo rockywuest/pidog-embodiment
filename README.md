@@ -9,6 +9,8 @@
 [![GitHub Stars](https://img.shields.io/github/stars/rockywuest/pidog-embodiment?style=social)](https://github.com/rockywuest/pidog-embodiment)
 
 > **Give your AI a physical body.** See, hear, speak, move, recognize faces — across any network.
+>
+> **The minimal LLM-robot bridge:** speak to a robot dog in German, French or English — it understands **locally** (Ollama or keyword mode, no cloud) and acts. Or let **Claude be the brain**: the robot is an [MCP server](#-claude-as-the-brain-mcp) with 10 tools. **No hardware needed to try it:** `./install.sh --mock`.
 
 <!-- HERO GIF — drop the file at docs/assets/hero.gif (see docs/media-guide.md) then uncomment:
 <p align="center">
@@ -91,7 +93,7 @@ Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
 ├── nox_voice_brain.py                 ├── nox_behavior_engine.py (FSM + Patrol)
 └── telegram_bot.py (opt)              ├── nox_vision.py        (SmolVLM local AI)
                                        ├── nox_face_recognition.py (SCRFD+ArcFace)
-                                       └── nox_voice_loop_v3.py (faster-whisper STT)
+                                       └── nox_voice_loop_v2.py (Vosk STT, wake word)
 ```
 
 </details>
@@ -103,7 +105,8 @@ Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
 | `nox-body` | Body (Pi 4) | TCP 9999 | Low-level hardware daemon (servos, sensors, camera) |
 | `nox-bridge` | Body (Pi 4) | HTTP 8888 | REST API + Behavior Engine (FSM) |
 | `nox-vision` | Body (Pi 4) | — | Local scene analysis (SmolVLM-256M via llama.cpp) |
-| `nox-voice` | Body (Pi 4) | — | Wake word + Speech-to-Text (faster-whisper) |
+| `nox-wifi-watchdog` | Body (Pi 4) | — | Rejoins WLAN after dropouts (watchdog script) |
+| `nox-voice` | Body (Pi 4) | — | Wake word + Speech-to-Text (Vosk, wake word "Nox") |
 
 ## 🚀 Quick Start
 
@@ -420,26 +423,40 @@ Tools: `dog_photo` · `dog_vision` · `dog_speak` · `dog_action` · `dog_look_a
 
 ### Bridge Endpoints (Body — Port 8888)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/status` | Full system status (battery, sensors, perception) |
-| GET | `/sensors` | Structured sensor data (battery %, distance, touch, posture) |
-| GET | `/capabilities` | Endpoint discovery: all endpoints, actions, expressions, sounds |
-| GET | `/selftest` | Servo self-test — **physically moves the dog**, reports thread/process health |
-| GET | `/photo` | Capture and return camera image |
+All 31 endpoints the bridge actually serves — see `body/nox_brain_bridge.py`.
+
+| Method | Endpoint | What it does |
+| --- | --- | --- |
+| GET | `/status` | Battery, uptime, behavior state, security settings, last speech result |
+| GET | `/sensors` | Ultrasonic distance, touch, battery, obstacle flags |
+| GET | `/capabilities` | Valid actions, endpoints, feature flags |
+| GET | `/selftest` | Servo/daemon self-test — physically moves the dog; reports dead threads, queue, audio |
+| GET | `/photo` | Take a photo — JSON with `photo_b64` + faces; `?format=jpeg` returns the image itself |
 | GET | `/look` | Photo + face detection + scene analysis |
-| GET | `/vision` | Latest local vision result (SmolVLM, if installed) |
-| POST | `/speak` | Text-to-Speech (async; `"blocking": true` waits and reports failures; last result in `/status` → `sensors.last_speak`) |
-| POST | `/action` | Execute movement: `{"action": "sit"}` |
-| POST | `/expression` | Coordinated emotion: action + RGB + head + sound |
-| POST | `/combo` | Combined action: actions + speak + RGB + head |
-| POST | `/rgb` | Set LED color: `{"r":0, "g":255, "b":0, "mode":"breath"}` |
-| POST | `/head` | Move head: `{"yaw":30, "roll":0, "pitch":10}` |
-| POST | `/face/register` | Register face: `{"name": "Rocky"}` (takes photo) |
-| POST | `/face/identify` | Identify faces in current view |
-| GET | `/face/list` | List all known faces |
-| POST | `/voice/input` | Submit text as voice input |
-| GET | `/voice/inbox` | Poll for pending voice messages |
+| GET | `/vision` | Latest on-device SmolVLM scene description |
+| GET | `/perception` | Current perception state (faces, objects, last photo) |
+| GET | `/state` | Bridge-internal state snapshot |
+| GET | `/faces` | Known faces in the recognition DB |
+| GET | `/scan` | Ultrasonic distance scan |
+| GET | `/scan/sweep` | Panoramic head-sweep scan |
+| GET | `/memory/recent`, `/memory/stats` | Long-term memory reads (POST accepted too) |
+| GET | `/voice/inbox` | Pending voice messages (polling reads clear it) |
+| GET/POST | `/voice/echo_until` | TTS echo-suppression window |
+| POST | `/speak` | TTS; `"blocking": true` waits and reports the real outcome |
+| POST | `/action` | Execute action(s): `{"action": "sit"}` or `{"actions": [...]}` |
+| POST | `/move` | Semantic movement: direction + `distance_cm` / `angle_deg` |
+| POST | `/combo` | Actions + speech + RGB + head in one call |
+| POST | `/expression` | Coordinated emotion: action + LEDs + head pose + sound |
+| POST | `/rgb` | LED strip color and animation |
+| POST | `/head` | Head pose (yaw/roll/pitch) |
+| POST | `/look_at` | Head by `direction` (left/right/up/down/center) or `angle`/`tilt` |
+| POST | `/face/register` | Register the face in front of the camera under a name |
+| POST | `/voice/input` | Text command → brain; reports whether the brain received it |
+| POST | `/voice/respond` | Brain's reply → spoken by the dog |
+| POST | `/behavior/start` | Autonomous mode on (idle/patrol/play) |
+| POST | `/behavior/stop` | Autonomous mode off (drains queued motion) |
+| POST | `/emergency_stop` | Freeze NOW |
+| POST | `/command` | Raw daemon passthrough (unvalidated by design) |
 
 ### Available Actions
 
@@ -672,7 +689,8 @@ pidog-embodiment/
 │   ├── nox_vision.py              # Local vision engine (SmolVLM-256M via llama.cpp)
 │   ├── nox_face_recognition.py    # SCRFD detection + ArcFace recognition
 │   ├── pidog_memory.py            # Drift-style memory with co-occurrence + decay
-│   ├── nox_voice_loop_v3.py       # Wake word + faster-whisper STT
+│   ├── nox_voice_loop_v2.py       # Wake word + Vosk STT (what nox-voice runs)
+│   ├── nox_voice_loop_v3.py       # Experimental: faster-whisper + VAD variant
 │   ├── nox_control.py             # Direct servo control utilities
 │   ├── nox_i2c_diag.py            # I2C/MCU reachability diagnostics (issue #12)
 │   ├── nox_motion.py              # Draining the SDK's motion queue (issue #25)
