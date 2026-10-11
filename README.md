@@ -187,6 +187,38 @@ sudo systemctl start nox-brain
 > model (e.g. `llama3.1:8b`, `qwen2.5:7b`) follows the JSON format much more
 > reliably.
 
+### Configuration — where which setting lives
+
+Both machines read plain env files; edit, then restart the named service.
+Every key is documented with examples in the file itself.
+
+**Robot — `body/nox.env`** (restart: `sudo systemctl restart nox-body nox-bridge nox-voice`)
+
+| Key | What it does | Default |
+|---|---|---|
+| `BRAIN_HOST` | Where the brain runs (`127.0.0.1` if same machine) | — (required) |
+| `AUDIODEV` | Speaker card; `auto` detects, skipping HDMI | ALSA default |
+| `PIPER_MODEL` | TTS voice (`.onnx`); unset = any installed voice | auto-detect |
+| `VOSK_MODEL_PATH` | STT model folder — its language = what the dog understands | de model path |
+| `WAKE_WORD` | Wake word (pick one your STT model knows; accents ok) | `nox` |
+| `CONVERSATION_TIMEOUT` | Seconds of wake-word-free listening after an exchange; `0` = always require the wake word | `45` |
+| `MIC_DEVICE` | Pin a microphone if detection picks wrong | auto-detect |
+| `NOX_LANG` | Language of the dog's own phrases (battery etc.) | from voice |
+| `NOX_API_TOKEN` / `NOX_RATE_LIMIT` | Bridge auth + rate limit (see Security) | off / 600 |
+| `NOX_NO_AUTO` | `1` disables autonomous behavior at boot | autonomous on |
+
+**Brain — `/etc/default/nox-brain`** (restart: `sudo systemctl restart nox-brain`; verify: `journalctl -u nox-brain | grep Language`)
+
+| Key | What it does | Default |
+|---|---|---|
+| `PIDOG_HOST` | The robot's address | `pidog.local` |
+| `OPENAI_URL` + `LLM_MODEL` | Any OpenAI-compatible endpoint — e.g. Ollama on a big PC: `http://<pc>:11434/v1/chat/completions` | OpenAI |
+| `OPENAI_API_KEY` | Only for cloud endpoints | — |
+| `NOX_MODE` | `chat` (LLM answers anything) or `commands` (keyword commands only — deterministic, free, TV-proof) | `chat` |
+| `NOX_LANG` | Reply language: `auto` (the speaker's) or fixed `de`/`en`/`fr` | `auto` |
+| `BATTERY_LOW_V` | Battery warning threshold (volts) | `6.8` |
+| `NOX_API_TOKEN` | Must match the robot's, if set there | — |
+
 ### Nox Mode vs. SunFounder Examples
 
 The install script *enables* the body services, so Nox starts on every boot and
@@ -388,6 +420,10 @@ journalctl -u nox-voice -n 20 --no-pager    # expect the model to load, then "li
 
 # 3. Say "Nox" ... then your command: "Assieds-toi !", "Sitz!", "sit down"
 ```
+
+Small Vosk models for the major languages (en/de/fr/es/it…) work well; for
+less-supported languages recognition may be rough — `NOX_MODE=commands` on the
+brain then still gives reliable keyword control.
 
 Without a model (or without a USB mic) `nox-voice` exits cleanly and voice
 input stays off — `./scripts/doctor.sh` tells you which of the two is missing.
@@ -727,7 +763,9 @@ pidog-embodiment/
 
 ## 🤝 Contributing
 
-This project is open source! We'd love contributions for:
+This project is open source! Tests run anywhere (`PYTHONPATH=. python3 -m pytest tests/ -q`),
+and `./install.sh --mock` gives you a robot-free dev loop — see [CONTRIBUTING.md](CONTRIBUTING.md)
+and [SUPPORT.md](SUPPORT.md). We'd love contributions for:
 
 - **New body adapters** (robot arms, drones, wheeled robots)
 - **New LLM backends** (local models, Ollama, etc.)
@@ -743,6 +781,13 @@ MIT License — use it, modify it, build cool robots with it.
 If this project helped you or made you smile, consider buying us a coffee:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/rockywuest)
+
+## 🙏 Thanks
+
+- **[Thio007](https://github.com/Thio007)** — the project's first external robot
+  runs in France because he reported, tested and verified his way through nine
+  issues: audio routing, motion, speech, vision, multilingual voice and the MCP
+  path all got fixed on his hardware. Merci !
 
 ## 💡 Inspiration
 
