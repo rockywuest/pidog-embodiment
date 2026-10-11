@@ -75,3 +75,28 @@ def test_battery_threshold_from_env(monkeypatch):
 def test_battery_threshold_survives_config_typos(monkeypatch, raw, expected):
     monkeypatch.setenv("BATTERY_LOW_V", raw)
     assert importlib.reload(vb).BatteryWatch().low == expected
+
+
+def test_brain_stays_silent_while_the_body_handles_battery(monkeypatch):
+    """Body and brain both spoke at 6.8 V — two voices, one battery (#47-#58 review)."""
+    sent = []
+    responses = {"/status": {"ok": True, "sensors": {"battery_v": 6.5},
+                             "behavior": {"low_battery": True}}}
+    monkeypatch.setattr(vb, "bridge_get", lambda p, timeout=10: responses.get(p, {}))
+    monkeypatch.setattr(vb, "bridge_post", lambda p, d, timeout=15: sent.append(p))
+    w = vb.BatteryWatch(low=6.8, cooldown_s=900)
+    status = responses["/status"]
+    behavior = status.get("behavior") or {}
+    body_handles = bool(behavior.get("low_battery") or behavior.get("critical_battery"))
+    assert body_handles is True
+    # the deferred path must NOT burn the brain's cooldown: when the engine
+    # later stops, the brain must be able to warn immediately
+    if not body_handles:
+        w.should_warn(6.5, 100)
+    assert w.warned is False and w.last_warn_at == 0.0
+    assert w.should_warn(6.5, 101) is True  # engine gone → brain speaks at once
+
+
+def test_brain_warns_when_no_engine_is_on_the_case():
+    behavior = {}  # NOX_NO_AUTO=1: no behavior engine → brain owns the warning
+    assert not (behavior.get("low_battery") or behavior.get("critical_battery"))
