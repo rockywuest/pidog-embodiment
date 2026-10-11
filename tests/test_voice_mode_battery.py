@@ -69,3 +69,9 @@ def test_battery_threshold_from_env(monkeypatch):
     monkeypatch.setenv("BATTERY_LOW_V", "7.2")
     w = importlib.reload(vb).BatteryWatch()
     assert w.low == 7.2 and w.reset_above == 7.8
+
+
+@pytest.mark.parametrize("raw,expected", [("6.8V", 6.8), ("7,0", 7.0), ("high", 6.8)])
+def test_battery_threshold_survives_config_typos(monkeypatch, raw, expected):
+    monkeypatch.setenv("BATTERY_LOW_V", raw)
+    assert importlib.reload(vb).BatteryWatch().low == expected

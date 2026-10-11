@@ -102,7 +102,14 @@ class BatteryWatch:
     BATTERY_LOW_V in /etc/default/nox-brain adjusts for ADC calibration."""
 
     def __init__(self, low=None, reset_above=None, cooldown_s=900):
-        self.low = low if low is not None else float(os.environ.get("BATTERY_LOW_V", "6.8") or 6.8)
+        if low is None:
+            raw = (os.environ.get("BATTERY_LOW_V") or "6.8").strip()
+            try:
+                low = float(raw.replace(",", ".").rstrip("vV "))
+            except ValueError:
+                print(f"[brain] WARNING: BATTERY_LOW_V={raw!r} is not a number — using 6.8", flush=True)
+                low = 6.8
+        self.low = low
         self.reset_above = reset_above if reset_above is not None else self.low + 0.6
         self.cooldown_s = cooldown_s
         self.warned = False
@@ -246,7 +253,7 @@ User: "Comment vas-tu ?"
 {"speak":"Je vais très bien ! Prêt à jouer !","actions":["wag_tail"],"emotion":"happy"}""",
 }
 if NOX_LANG != "auto":
-    SYSTEM_PROMPT = (SYSTEM_PROMPT[:SYSTEM_PROMPT.index("Examples:")]
+    SYSTEM_PROMPT = (SYSTEM_PROMPT[:SYSTEM_PROMPT.rindex("Examples:")]
                      + _EXAMPLES_FIXED[NOX_LANG]
                      + f"\n\n(Remember: every \"speak\" value in {LANG_NAMES[NOX_LANG]}.)")
 
