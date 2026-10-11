@@ -95,6 +95,34 @@ class ConversationState:
 conversation = ConversationState()
 
 
+class BatteryWatch:
+    """When to say the battery warning — at most once per cooldown, with a wide
+    hysteresis. 6.8/7.0 was too narrow: a pack sagging under load crosses that
+    band every few seconds, and the dog warned in a loop (issue #45 log).
+    BATTERY_LOW_V in /etc/default/nox-brain adjusts for ADC calibration."""
+
+    def __init__(self, low=None, reset_above=None, cooldown_s=900):
+        self.low = low if low is not None else float(os.environ.get("BATTERY_LOW_V", "6.8") or 6.8)
+        self.reset_above = reset_above if reset_above is not None else self.low + 0.6
+        self.cooldown_s = cooldown_s
+        self.warned = False
+        self.last_warn_at = 0.0
+
+    def should_warn(self, batt, now=None):
+        if batt is None:
+            return False
+        now = time.time() if now is None else now
+        if batt > self.reset_above:
+            self.warned = False
+        if batt < self.low and not self.warned and now - self.last_warn_at >= self.cooldown_s:
+            self.warned = True
+            self.last_warn_at = now
+            print(f"[brain] battery low: {batt} V (threshold {self.low} V) — warning once, "
+                  f"next at most in {self.cooldown_s // 60} min", flush=True)
+            return True
+        return False
+
+
 def numeric_battery(sensors):
     """battery_v as float, or None. The daemon reports the STRING "error" when
     its ADC read fails (#12) — that leaked into the LLM context as
@@ -183,9 +211,44 @@ User: "good boy"
 {"speak":"Thank you! That makes me happy!","actions":["wag_tail"],"emotion":"love"}"""
 SYSTEM_PROMPT = (SYSTEM_PROMPT.replace("{HOUSEHOLD_LINE}", HOUSEHOLD_LINE)
                  .replace("{LANGUAGE_RULE}", _LANGUAGE_RULE))
+
+# Small local models imitate the examples more than they obey the rule — with a
+# fixed NOX_LANG the mixed-language examples above made Ollama answer French
+# users in German anyway (issue #56). Fixed language = examples in that
+# language ONLY.
+_EXAMPLES_FIXED = {
+    "de": """Examples:
+User: "Sitz!"
+{"speak":"Mach ich!","actions":["sit"],"emotion":"happy"}
+
+User: "sit down and bark"
+{"speak":"Mach ich — wuff!","actions":["sit","bark"],"emotion":"excited"}
+
+User: "Wie geht es dir?"
+{"speak":"Mir geht es super! Ich bin bereit zum Spielen!","actions":["wag_tail"],"emotion":"happy"}""",
+    "en": """Examples:
+User: "sit"
+{"speak":"On it!","actions":["sit"],"emotion":"happy"}
+
+User: "Setz dich und bell!"
+{"speak":"On it — woof!","actions":["sit","bark"],"emotion":"excited"}
+
+User: "how are you"
+{"speak":"I'm great! Ready to play!","actions":["wag_tail"],"emotion":"happy"}""",
+    "fr": """Examples:
+User: "Assis !"
+{"speak":"D'accord !","actions":["sit"],"emotion":"happy"}
+
+User: "sit down and bark"
+{"speak":"D'accord — ouaf !","actions":["sit","bark"],"emotion":"excited"}
+
+User: "Comment vas-tu ?"
+{"speak":"Je vais très bien ! Prêt à jouer !","actions":["wag_tail"],"emotion":"happy"}""",
+}
 if NOX_LANG != "auto":
-    # Examples in other languages would pull a small model away from the rule.
-    SYSTEM_PROMPT += f"\n\n(Remember: every \"speak\" value in {LANG_NAMES[NOX_LANG]}.)"
+    SYSTEM_PROMPT = (SYSTEM_PROMPT[:SYSTEM_PROMPT.index("Examples:")]
+                     + _EXAMPLES_FIXED[NOX_LANG]
+                     + f"\n\n(Remember: every \"speak\" value in {LANG_NAMES[NOX_LANG]}.)")
 
 
 # ─── Bridge Communication ───
@@ -472,6 +535,31 @@ def reply_language(text=None):
     return _last_lang or "de"
 
 
+# NOX_MODE=commands: deterministic keyword commands ONLY — nothing is sent to
+# an LLM, and speech that is no command is ignored instead of chatted about.
+# Requested by the field (issue #45): a TV in the room kept feeding the LLM
+# noise fragments mid-conversation. "chat" (default) = current behavior.
+NOX_MODE = (os.environ.get("NOX_MODE") or "chat").strip().lower()
+if NOX_MODE not in ("chat", "commands"):
+    print(f"[brain] NOX_MODE={NOX_MODE!r} unknown (chat/commands) — using chat", flush=True)
+    NOX_MODE = "chat"
+
+
+def process_voice_commands(msg):
+    """Keyword commands only; everything else is logged and stays unanswered."""
+    text = msg.get("text", "").strip()
+    if not text:
+        return
+    cmd = parse_simple_command(text)
+    if cmd["intent"] is None:
+        print(f"[brain-commands] ignored (no command): '{text[:60]}'", flush=True)
+        return
+    lang = reply_language(text)
+    reply = _REPLIES["ok" if cmd["intent"] == "command" else cmd["intent"]][lang]
+    print(f"[brain-commands] → {cmd['actions']} ({lang})", flush=True)
+    bridge_post("/combo", {"actions": cmd["actions"], "speak": reply})
+
+
 def process_voice_simple(msg):
     """Fallback voice processing without an LLM: keyword commands."""
     text = msg.get("text", "").strip()
@@ -595,8 +683,12 @@ def main():
     import threading as _th
     _th.Thread(target=start_push_server, daemon=True).start()
 
+    print(f"[brain] Language: {NOX_LANG}  Voice mode: {NOX_MODE}", flush=True)
     has_api = LLM_CONFIGURED
-    if has_api:
+    if NOX_MODE == "commands":
+        print("[brain] Commands-only mode: keyword commands, no LLM chat", flush=True)
+        process_fn = process_voice_commands
+    elif has_api:
         print(f"[brain] LLM API available (model: {OPENAI_MODEL}, url: {OPENAI_URL})", flush=True)
         process_fn = process_voice_intelligent
     else:
@@ -605,7 +697,7 @@ def main():
     
     last_sensor_check = 0
     consecutive_errors = 0
-    battery_warned = False
+    battery = BatteryWatch()
     circuit_open = False  # Circuit breaker: stop polling when body is dead
     circuit_retry_at = 0
     CIRCUIT_THRESHOLD = 5  # Open circuit after 5 consecutive errors
@@ -649,15 +741,9 @@ def main():
                 status = bridge_get("/status")
                 if not status.get("error"):
                     sensors = status.get("sensors", {})
-                    batt = numeric_battery(sensors)
-                    if batt is None:
-                        pass  # unreadable — comparing the string "error" raised TypeError
-                    elif batt < 6.8 and not battery_warned:
+                    if battery.should_warn(numeric_battery(sensors)):
                         bridge_post("/speak", {"text": _REPLIES["battery"][reply_language()]})
                         bridge_post("/rgb", {"r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
-                        battery_warned = True
-                    elif batt > 7.0:
-                        battery_warned = False
                 last_sensor_check = now
             
             consecutive_errors = 0

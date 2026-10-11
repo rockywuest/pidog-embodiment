@@ -85,3 +85,19 @@ def test_context_wrapper_is_not_german(monkeypatch):
     vb = load_brain(monkeypatch)
     msgs = vb.ConversationState().get_messages("Qu'est-ce que tu vois ?", "Battery: 8.0V")
     assert msgs[-1]["content"] == "[Context: Battery: 8.0V]\n\nUser says: Qu'est-ce que tu vois ?"
+
+
+def test_fixed_language_prompt_has_no_foreign_examples(monkeypatch):
+    # Small models imitate examples over rules — German examples made an
+    # Ollama answer French users in German (issue #56).
+    vb = load_brain(monkeypatch, "fr")
+    assert "Mach ich!" not in vb.SYSTEM_PROMPT
+    assert "D'accord !" in vb.SYSTEM_PROMPT
+    assert 'EXCLUSIVELY respond with a single JSON object' in vb.SYSTEM_PROMPT
+    vb2 = load_brain(monkeypatch, "de")
+    assert "D'accord !" not in vb2.SYSTEM_PROMPT and "Mach ich!" in vb2.SYSTEM_PROMPT
+
+
+def test_auto_keeps_the_mixed_examples(monkeypatch):
+    vb = load_brain(monkeypatch)
+    assert "Mach ich!" in vb.SYSTEM_PROMPT and "D'accord !" in vb.SYSTEM_PROMPT

@@ -97,6 +97,15 @@ def compute_rms(data):
 # some languages (French hears "inox" or "knox"), and a word that exists in
 # the model's vocabulary triggers far more reliably (issue #45 follow-up).
 WAKE_WORD = (os.environ.get("WAKE_WORD") or "nox").strip().lower()
+# An everyday word as wake word fires on everything: WAKE_WORD=hey woke the dog
+# on every "hey ..." a French TV said (issue #45 log). Warn, loudly.
+_COMMON_WORDS = {"hey", "he", "eh", "hi", "na", "hallo", "ok", "oui", "non", "ja",
+                 "nein", "yes", "no", "le", "la", "de", "un", "une", "et", "the", "a"}
+if WAKE_WORD in _COMMON_WORDS or len(WAKE_WORD) < 3:
+    print(f"[voice-v2] WARNING: WAKE_WORD='{WAKE_WORD}' is an everyday word — the dog "
+          "will wake constantly. Pick a distinctive word (e.g. milou, rex, nox).", flush=True)
+print(f"[voice-v2] Wake word: '{WAKE_WORD}' (also with hey/hallo/... in front, "
+      f"and one letter off)", flush=True)
 WAKE_PREFIXES = ["hallo", "hey", "hi", "na", "he", "eh"]  # "hallo nox" etc.
 WAKE_WORDS_EXACT = [WAKE_WORD] + [f"{p} {WAKE_WORD}" for p in WAKE_PREFIXES]
 if WAKE_WORD == "nox":
