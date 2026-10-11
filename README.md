@@ -196,7 +196,7 @@ Every key is documented with examples in the file itself.
 
 | Key | What it does | Default |
 |---|---|---|
-| `BRAIN_HOST` | Where the brain runs (`127.0.0.1` if same machine) | — (required) |
+| `BRAIN_HOST` | Where the brain runs — set it when the brain is another machine | `127.0.0.1` |
 | `AUDIODEV` | Speaker card; `auto` detects, skipping HDMI | ALSA default |
 | `PIPER_MODEL` | TTS voice (`.onnx`); unset = any installed voice | auto-detect |
 | `VOSK_MODEL_PATH` | STT model folder — its language = what the dog understands | de model path |
@@ -785,8 +785,8 @@ If this project helped you or made you smile, consider buying us a coffee:
 ## 🙏 Thanks
 
 - **[Thio007](https://github.com/Thio007)** — the project's first external robot
-  runs in France because he reported, tested and verified his way through nine
-  issues: audio routing, motion, speech, vision, multilingual voice and the MCP
+  runs in France because he reported, tested and verified his way through issue
+  after issue: audio routing, motion, speech, vision, multilingual voice and the MCP
   path all got fixed on his hardware. Merci !
 
 ## 💡 Inspiration
