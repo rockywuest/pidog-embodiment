@@ -1,0 +1,39 @@
+name: 🐛 Bug report
+description: Something on the robot, brain, or mock isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Two commands give us 90% of the diagnosis — running
+        them first usually saves several back-and-forth rounds.
+  - type: dropdown
+    id: machine
+    attributes:
+      label: Which machine?
+      options:
+        - Body (the robot)
+        - Brain
+        - Both / not sure
+        - No hardware (mock body / MCP)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened — and what did you expect?
+      description: The exact command you ran and its output help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of ./scripts/doctor.sh
+      description: Run it on the affected machine (no sudo needed). Skip only for mock/MCP issues.
+      render: shell
+  - type: textarea
+    id: journal
+    attributes:
+      label: Service log
+      description: "journalctl -u nox-body -n 50 --no-pager — or nox-brain / nox-voice / nox-vision, whichever is involved"
+      render: shell
