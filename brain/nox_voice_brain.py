@@ -754,7 +754,10 @@ def main():
                     # (found in the #47-#58 interaction review).
                     behavior = status.get("behavior") or {}
                     body_handles = bool(behavior.get("low_battery") or behavior.get("critical_battery"))
-                    if battery.should_warn(numeric_battery(sensors)) and not body_handles:
+                    # body_handles FIRST: should_warn mutates cooldown state,
+                    # and a warning the engine suppressed must not silence the
+                    # brain later when the engine is gone (review of #59).
+                    if not body_handles and battery.should_warn(numeric_battery(sensors)):
                         bridge_post("/speak", {"text": _REPLIES["battery"][reply_language()]})
                         bridge_post("/rgb", {"r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
                 last_sensor_check = now

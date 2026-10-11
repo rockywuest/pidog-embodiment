@@ -84,11 +84,17 @@ def test_brain_stays_silent_while_the_body_handles_battery(monkeypatch):
                              "behavior": {"low_battery": True}}}
     monkeypatch.setattr(vb, "bridge_get", lambda p, timeout=10: responses.get(p, {}))
     monkeypatch.setattr(vb, "bridge_post", lambda p, d, timeout=15: sent.append(p))
-    w = vb.BatteryWatch(low=6.8, cooldown_s=0)
+    w = vb.BatteryWatch(low=6.8, cooldown_s=900)
     status = responses["/status"]
     behavior = status.get("behavior") or {}
     body_handles = bool(behavior.get("low_battery") or behavior.get("critical_battery"))
-    assert w.should_warn(6.5, 100) is True and body_handles is True  # brain would warn, but defers
+    assert body_handles is True
+    # the deferred path must NOT burn the brain's cooldown: when the engine
+    # later stops, the brain must be able to warn immediately
+    if not body_handles:
+        w.should_warn(6.5, 100)
+    assert w.warned is False and w.last_warn_at == 0.0
+    assert w.should_warn(6.5, 101) is True  # engine gone → brain speaks at once
 
 
 def test_brain_warns_when_no_engine_is_on_the_case():
