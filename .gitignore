@@ -35,3 +35,7 @@ Thumbs.db
 # Temp
 /tmp/
 *.log
+
+# review/CI scratch worktrees never belong in the tree
+review-worktree/
+*-worktree/
