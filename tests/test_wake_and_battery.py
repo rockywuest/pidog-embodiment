@@ -90,3 +90,31 @@ def test_a_custom_wake_word_works_with_edit_distance(monkeypatch):
 def test_unrelated_speech_does_not_wake(monkeypatch):
     v2 = load_v2(monkeypatch)
     assert v2.fuzzy_wake_word_check("il fait beau aujourd'hui")[1] is False
+
+
+def test_accented_wake_word_matches_plain_transcription(monkeypatch):
+    v2 = load_v2(monkeypatch, "médor")
+    assert v2.WAKE_WORD == "medor"
+    cleaned, woke = v2.fuzzy_wake_word_check("medor assis")
+    assert woke and cleaned == "assis"
+    assert v2.fuzzy_wake_word_check("hé médor couché") == ("couché", True)
+
+
+def test_accents_in_the_command_part_survive(monkeypatch):
+    v2 = load_v2(monkeypatch)
+    cleaned, woke = v2.fuzzy_wake_word_check("nox couché")
+    assert woke and cleaned == "couché"  # matching is accent-free, the command is not
+
+
+def test_conversation_window_zero_requires_the_wake_word(monkeypatch):
+    monkeypatch.setenv("CONVERSATION_TIMEOUT", "0")
+    import importlib
+    import body.nox_voice_loop_v2 as v2
+    v2 = importlib.reload(v2)
+    try:
+        state = v2.VoiceState()
+        state.start_conversation()
+        assert state.in_conversation is False
+    finally:
+        monkeypatch.delenv("CONVERSATION_TIMEOUT")
+        importlib.reload(v2)

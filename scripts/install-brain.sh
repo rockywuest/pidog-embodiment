@@ -49,6 +49,8 @@ if [[ ! -f /etc/default/nox-brain ]]; then
 # ONLY keyword commands run (sit/assis/sitz, ...), everything else is ignored:
 # deterministic, free, and immune to a TV talking in the room.
 #NOX_MODE=commands
+# Pairs well with commands mode, in body/nox.env on the ROBOT:
+# CONVERSATION_TIMEOUT=0  → every command needs the wake word (no 45 s window)
 
 # The LLM can live on ANY machine — point OPENAI_URL at a bigger PC's Ollama:
 #OPENAI_URL=http://192.168.1.50:11434/v1/chat/completions

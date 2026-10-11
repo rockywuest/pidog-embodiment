@@ -96,7 +96,15 @@ def compute_rms(data):
 # The base wake word is configurable: small Vosk models mangle "Nox" badly in
 # some languages (French hears "inox" or "knox"), and a word that exists in
 # the model's vocabulary triggers far more reliably (issue #45 follow-up).
-WAKE_WORD = (os.environ.get("WAKE_WORD") or "nox").strip().lower()
+def _plain(word):
+    """Lowercase and strip accents: Vosk writes "medor" where the config says
+    "médor" — the match must not care (#45 interaction review)."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", word.lower())
+                   if not unicodedata.combining(c))
+
+
+WAKE_WORD = _plain((os.environ.get("WAKE_WORD") or "nox").strip())
 # An everyday word as wake word fires on everything: WAKE_WORD=hey woke the dog
 # on every "hey ..." a French TV said (issue #45 log). Warn, loudly.
 _COMMON_WORDS = {"hey", "he", "eh", "hi", "na", "hallo", "ok", "oui", "non", "ja",
@@ -114,7 +122,15 @@ if WAKE_WORD == "nox":
 
 SILENCE_TIMEOUT = 2.0
 MIN_PHRASE_LENGTH = 2
-CONVERSATION_TIMEOUT = 45.0  # Extended to 45s
+# Seconds the dog keeps listening WITHOUT a wake word after an exchange.
+# 0 turns the window off: every command needs the wake word — the right
+# setting next to NOX_MODE=commands, where ignored chatter gets no reply
+# that would justify a conversation (issue #45 interaction review).
+try:
+    CONVERSATION_TIMEOUT = float(os.environ.get("CONVERSATION_TIMEOUT", "45") or 45)
+except ValueError:
+    print("[voice-v2] WARNING: CONVERSATION_TIMEOUT is not a number — using 45", flush=True)
+    CONVERSATION_TIMEOUT = 45.0
 
 # ─── State ───
 class VoiceState:
@@ -124,6 +140,8 @@ class VoiceState:
         self.conversation_history = []
     
     def start_conversation(self):
+        if CONVERSATION_TIMEOUT <= 0:
+            return  # wake word required every time
         self.in_conversation = True
         self.last_interaction = time.time()
     
@@ -214,26 +232,28 @@ def fuzzy_wake_word_check(text):
     """
     text_lower = text.lower().strip()
     words = text_lower.split()
+    plain_words = [_plain(w) for w in words]  # accent-free, same word count
+    plain_text = " ".join(plain_words)
     
-    # 1. Exact match (original logic)
+    # 1. Exact match (original logic, accent-free)
     for ww in WAKE_WORDS_EXACT:
-        if text_lower.startswith(ww):
-            cleaned = text[len(ww):].strip()
+        if plain_text.startswith(ww):
+            cleaned = " ".join(words[len(ww.split()):]).strip()
             if cleaned and cleaned[0] in ",.!?;:":
                 cleaned = cleaned[1:].strip()
             return cleaned, True
     
     # 2. Single word fuzzy match: any word within edit distance 1 of the wake word
-    for i, word in enumerate(words):
+    for i, word in enumerate(plain_words):
         if levenshtein(word, WAKE_WORD) <= 1:
             # Found fuzzy "nox" — rest of text is the content
             remaining = " ".join(words[i+1:])
             return remaining, True
     
     # 3. Prefix + fuzzy: "hallo" + word close to "nox"
-    for i, word in enumerate(words):
-        if word in WAKE_PREFIXES and i + 1 < len(words):
-            next_word = words[i + 1]
+    for i, word in enumerate(plain_words):
+        if word in WAKE_PREFIXES and i + 1 < len(plain_words):
+            next_word = plain_words[i + 1]
             if levenshtein(next_word, WAKE_WORD) <= 2:  # more lenient with prefix
                 remaining = " ".join(words[i+2:])
                 return remaining, True
