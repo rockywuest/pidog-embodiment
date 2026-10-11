@@ -93,7 +93,7 @@ def test_brain_stays_silent_while_the_body_handles_battery(monkeypatch):
     # later stops, the brain must be able to warn immediately
     if not body_handles:
         w.should_warn(6.5, 100)
-    assert w.warned is False and w.last_warn_at == 0.0
+    assert w.warned is False and w.last_warn_at == float("-inf")  # pristine: never warned
     assert w.should_warn(6.5, 101) is True  # engine gone → brain speaks at once
 
 

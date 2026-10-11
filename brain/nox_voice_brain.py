@@ -113,7 +113,8 @@ class BatteryWatch:
         self.reset_above = reset_above if reset_above is not None else self.low + 0.6
         self.cooldown_s = cooldown_s
         self.warned = False
-        self.last_warn_at = 0.0
+        self.last_warn_at = float("-inf")  # "never" — 0.0 would mean "at epoch", which
+        # blocks the first warning for a whole cooldown under clocks that start near 0
 
     def should_warn(self, batt, now=None):
         if batt is None:
