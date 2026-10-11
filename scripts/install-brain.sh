@@ -42,7 +42,20 @@ if [[ ! -f /etc/default/nox-brain ]]; then
 
 # Language the dog answers in: auto (the language you speak to it, default),
 # or always de / en / fr — pick the one the robot's Piper voice speaks.
+# Check it arrived after a restart: journalctl -u nox-brain | grep Language
 #NOX_LANG=auto
+
+# Voice mode: chat (default — the LLM answers anything) or commands —
+# ONLY keyword commands run (sit/assis/sitz, ...), everything else is ignored:
+# deterministic, free, and immune to a TV talking in the room.
+#NOX_MODE=commands
+
+# The LLM can live on ANY machine — point OPENAI_URL at a bigger PC's Ollama:
+#OPENAI_URL=http://192.168.1.50:11434/v1/chat/completions
+#LLM_MODEL=qwen2.5:14b
+
+# Battery warning threshold in volts (default 6.8; raise/lower for your pack):
+#BATTERY_LOW_V=6.8
 
 # LLM backend — any OpenAI-compatible chat-completions endpoint.
 # Cloud (OpenAI): set the key, keep the default URL/model:
