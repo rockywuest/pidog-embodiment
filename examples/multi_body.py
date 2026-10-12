@@ -29,19 +29,19 @@ def switch_body(name):
     global active, robot
     if name in bodies:
         # Say goodbye to current body
-        robot.speak(f"Ich wechsle zu {name}")
+        robot.speak(f"Switching to {name}")
         
         # Switch
         active = name
         robot = bodies[name]
         
         # Greet from new body
-        robot.speak(f"Jetzt bin ich ein {name}!")
+        robot.speak(f"Now I am a {name}!")
         return True
     return False
 
 # Use current body
-robot.speak("Ich bin bereit!")
+robot.speak("Ready to go!")
 robot.move("sit")
 
 # Switch to car

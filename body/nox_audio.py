@@ -363,6 +363,22 @@ def spoken(key, env=None):
     return SPOKEN[key][body_language(env)]
 
 
+def env_volts(name, default, environ=None):
+    """A voltage from the environment, typo-tolerant ("6,8", "6.8V"), or the
+    default. The brain parses BATTERY_LOW_V exactly like this — one concept,
+    one spelling of its quirks (issue #45: a miscalibrated ADC makes the
+    threshold a per-robot setting, on the body too)."""
+    environ = os.environ if environ is None else environ
+    raw = (environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw.replace(",", ".").rstrip("vV "))
+    except ValueError:
+        print(f"[nox] {name}={raw!r} is not a voltage — using {default}", flush=True)
+        return default
+
+
 def find_piper_voice(configured=None, dirs=PIPER_VOICE_DIRS, preferred=PREFERRED_PIPER_VOICE):
     """Pick the voice /speak uses: {"model": path|None, "reason": str, "voices": [...]}.
 

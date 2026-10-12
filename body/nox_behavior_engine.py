@@ -35,9 +35,9 @@ from enum import Enum
 from collections import deque
 
 try:  # on the robot body/ is on sys.path; tests import it as a package
-    from nox_audio import spoken
+    from nox_audio import env_volts, spoken
 except ImportError:  # pragma: no cover - import path depends on the caller
-    from body.nox_audio import spoken
+    from body.nox_audio import env_volts, spoken
 
 # Optional memory
 try:
@@ -50,8 +50,15 @@ except ImportError:
 
 # ─── FSM States ───────────────────────────────────────────────────────────────
 
-BATTERY_LOW_V = 6.8       # warn and rest
-BATTERY_CRITICAL_V = 6.2  # lie down and stay down
+# Per-robot settings: a miscalibrated ADC reads a full pack below 6.8 V and
+# the dog nags forever (issue #45). Same variable name as on the brain —
+# set them in body/nox.env.
+BATTERY_LOW_V = env_volts("BATTERY_LOW_V", 6.8)            # warn and rest
+BATTERY_CRITICAL_V = env_volts("BATTERY_CRITICAL_V", 6.2)  # lie down and stay down
+if BATTERY_CRITICAL_V >= BATTERY_LOW_V:
+    print(f"[behavior] BATTERY_CRITICAL_V ({BATTERY_CRITICAL_V}) must be below "
+          f"BATTERY_LOW_V ({BATTERY_LOW_V}) — using defaults 6.8/6.2", flush=True)
+    BATTERY_LOW_V, BATTERY_CRITICAL_V = 6.8, 6.2
 BATTERY_ABSENT_V = 1.0   # at or below this the rail carries no pack
 BATTERY_ASSUMED_V = 8.4  # stand-in charge level when the real one is unknown
 
