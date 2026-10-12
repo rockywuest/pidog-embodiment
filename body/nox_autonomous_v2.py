@@ -27,6 +27,15 @@ except ImportError:
     _HAS_MEMORY = False
     print("[auto-v2] pidog_memory not available — running without memory", flush=True)
 
+try:  # on the robot body/ is on sys.path; tests import it as a package
+    from nox_audio import env_volts, spoken
+except ImportError:  # pragma: no cover - import path depends on the caller
+    from body.nox_audio import env_volts, spoken
+
+# Same per-robot threshold as the behavior engine and the brain (issue #45):
+# this class is the engine's FALLBACK, so it must not import the engine.
+BATTERY_LOW_V = env_volts("BATTERY_LOW_V", 6.8)
+
 
 # ─── Mood System ───
 class MoodState:
@@ -294,9 +303,11 @@ class AutonomousBehavior:
                 batt_v = result.get("battery_v", 8.4)
                 self.mood.battery_level = max(0, min(1.0, (batt_v - 6.0) / 2.4))
                 
-                if batt_v < 6.8 and not self.low_battery_mode:
+                if batt_v < BATTERY_LOW_V and not self.low_battery_mode:
                     self.low_battery_mode = True
-                    self.daemon({"cmd": "speak", "text": "Meine Batterie wird schwach. Bitte lade mich auf."})
+                    # The last hardcoded German sentence a French robot spoke
+                    # aloud (repo sweep after issue #45) — now localized.
+                    self.daemon({"cmd": "speak", "text": spoken("battery_low")})
                     self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
                     print(f"[auto-v2] LOW BATTERY: {batt_v}V", flush=True)
                     if _HAS_MEMORY:
@@ -306,7 +317,7 @@ class AutonomousBehavior:
                             mood_state=self.mood.as_dict(),
                             sensor_data={"battery_v": batt_v},
                         )
-                elif batt_v > 7.2:
+                elif batt_v > BATTERY_LOW_V + 0.4:  # same hysteresis as the engine
                     self.low_battery_mode = False
                 
                 self.mood.update(2.0)
