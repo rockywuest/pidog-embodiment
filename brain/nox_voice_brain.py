@@ -113,6 +113,7 @@ class BatteryWatch:
         self.reset_above = reset_above if reset_above is not None else self.low + 0.6
         self.cooldown_s = cooldown_s
         self.warned = False
+        self.low_streak = 0  # consecutive low readings; one alone is a load sag
         self.last_warn_at = float("-inf")  # "never" — 0.0 would mean "at epoch", which
         # blocks the first warning for a whole cooldown under clocks that start near 0
 
@@ -122,7 +123,16 @@ class BatteryWatch:
         now = time.time() if now is None else now
         if batt > self.reset_above:
             self.warned = False
-        if batt < self.low and not self.warned and now - self.last_warn_at >= self.cooldown_s:
+        if batt >= self.low:
+            self.low_streak = 0
+            return False
+        # Debounce: a healthy pack sags below the threshold for the seconds a
+        # servo move draws current (the reporter's 7.4 V pack logged 6.56 V
+        # under load, issue #45). Only a SUSTAINED low reading is a low pack.
+        self.low_streak += 1
+        if self.low_streak < 2:
+            return False
+        if not self.warned and now - self.last_warn_at >= self.cooldown_s:
             self.warned = True
             self.last_warn_at = now
             print(f"[brain] battery low: {batt} V (threshold {self.low} V) — warning once, "
@@ -138,6 +148,11 @@ def numeric_battery(sensors):
     battery drama mid-answer (issue #45 follow-up). Unknown stays unknown."""
     value = (sensors or {}).get("battery_v")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value <= 1.0:
+        # Not a charge level: an unplugged pack or a glitched ADC read reads
+        # ~0.0 V. The reporter's journal showed "battery low: 0.0 V" warnings
+        # while the pack measured 7.4 V at rest (issue #45).
         return None
     return float(value)
 

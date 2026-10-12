@@ -119,12 +119,15 @@ def test_critical_battery_lies_down():
 def test_critical_jumps_straight_from_full():
     e = _battery_engine()
     e._on_battery(6.0)
+    assert not e.critical_battery_mode  # one reading could be a load sag (#45)
+    e._on_battery(6.0)  # sustained → act
     assert e.critical_battery_mode and e.low_battery_mode
 
 
 def test_battery_modes_clear_with_hysteresis():
     e = _battery_engine()
     e._on_battery(6.0)
+    e._on_battery(6.0)  # second consecutive reading confirms it
     e._on_battery(6.5)  # still within hysteresis of the critical level
     assert e.critical_battery_mode
     e._on_battery(6.7)

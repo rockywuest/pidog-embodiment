@@ -496,8 +496,17 @@ class BehaviorEngine:
         Lying down matters: a pack sagging under load browns out the servos
         mid-step, and a dog that drops from standing can fall over.
         Hysteresis on both levels so a reading wobbling around the threshold
-        does not repeat the alarm every two seconds.
+        does not repeat the alarm every two seconds. Debounced: a healthy pack
+        sags below the threshold for the seconds a servo move draws current
+        (a 7.4 V pack logged 6.56 V under load, issue #45) — only the second
+        consecutive low reading counts.
         """
+        if batt_v < BATTERY_LOW_V:
+            self._low_streak = getattr(self, "_low_streak", 0) + 1
+            if self._low_streak < 2:
+                return  # could be a load sag — wait for the next reading
+        else:
+            self._low_streak = 0
         if batt_v < BATTERY_CRITICAL_V and not self.critical_battery_mode:
             self.critical_battery_mode = True
             self.low_battery_mode = True
