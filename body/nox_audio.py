@@ -335,6 +335,13 @@ SPOKEN = {
     "battery_critical": {"de": "Batterie kritisch. Ich lege mich hin.",
                          "en": "Battery critical. I'm lying down.",
                          "fr": "Batterie critique. Je me couche."},
+    # A French dog saying the hardcoded German "Ja? Was ist?" came back from
+    # the field as the mystery reply "ja ossist?" (issue #45).
+    "wake_ack": {"de": "Ja? Was ist?", "en": "Yes? What is it?",
+                 "fr": "Oui ? Qu'est-ce qu'il y a ?"},
+    "goodnight": {"de": "Ich gehe schlafen. Gute Nacht!",
+                  "en": "I'm going to sleep. Good night!",
+                  "fr": "Je vais dormir. Bonne nuit !"},
 }
 
 

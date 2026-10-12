@@ -429,6 +429,19 @@ Without a model (or without a USB mic) `nox-voice` exits cleanly and voice
 input stays off — `./scripts/doctor.sh` tells you which of the two is missing.
 Text commands via `POST /voice/input` work either way.
 
+**The dog doesn't understand you?** See what it actually hears — live, through
+exactly the service's pipeline (same mic, gain, energy gate, wake word):
+
+```bash
+sudo systemctl stop nox-voice       # free the microphone
+python3 scripts/stt_debug.py        # speak; Ctrl+C to stop
+sudo systemctl start nox-voice
+```
+
+Every finished phrase is printed with its wake-word verdict, and phrases the
+service would silently drop (too quiet, filler words) say why. If the words on
+screen are wrong, it is the STT model or the microphone — not the brain.
+
 ## 🔌 Claude as the Brain (MCP)
 
 `brain/nox_mcp_server.py` exposes the robot as **MCP tools** — photo (the model
