@@ -48,16 +48,28 @@ def test_nox_mode_env_selects_commands(monkeypatch):
 def test_battery_warns_once_not_in_a_loop():
     w = vb.BatteryWatch(low=6.8, cooldown_s=900)
     t = 1000.0
-    assert w.should_warn(6.7, t) is True
+    # Debounced: one low reading is a servo-load sag (a 7.4 V pack logged
+    # 6.56 V under load, issue #45) — only the second in a row warns.
+    assert w.should_warn(6.7, t) is False
+    assert w.should_warn(6.7, t + 5) is True
     # sagging under load, recovering, sagging — the old code warned each time
     for dv, dt in [(7.1, 10), (6.7, 20), (7.05, 30), (6.6, 40)]:
         assert w.should_warn(dv, t + dt) is False
     # even after a real reset above the wide threshold, the cooldown holds
     assert w.should_warn(7.5, t + 50) is False
     assert w.should_warn(6.7, t + 60) is False
-    # after the cooldown AND a reset, it may warn again
+    assert w.should_warn(6.7, t + 75) is False
+    # after the cooldown AND a reset, two consecutive lows may warn again
     assert w.should_warn(7.5, t + 901) is False
-    assert w.should_warn(6.7, t + 902) is True
+    assert w.should_warn(6.7, t + 902) is False
+    assert w.should_warn(6.7, t + 917) is True
+
+
+def test_a_single_load_sag_never_warns():
+    w = vb.BatteryWatch(low=6.8, cooldown_s=900)
+    # low, recovered, low, recovered — isolated sags, never two in a row
+    for v, t in [(6.6, 0), (7.3, 15), (6.5, 30), (7.3, 45), (6.4, 60), (7.2, 75)]:
+        assert w.should_warn(v, t) is False
 
 
 def test_battery_unreadable_never_warns():
@@ -94,7 +106,9 @@ def test_brain_stays_silent_while_the_body_handles_battery(monkeypatch):
     if not body_handles:
         w.should_warn(6.5, 100)
     assert w.warned is False and w.last_warn_at == float("-inf")  # pristine: never warned
-    assert w.should_warn(6.5, 101) is True  # engine gone → brain speaks at once
+    # engine gone → brain speaks on the next confirmed (second) low reading
+    assert w.should_warn(6.5, 101) is False
+    assert w.should_warn(6.5, 116) is True
 
 
 def test_brain_warns_when_no_engine_is_on_the_case():

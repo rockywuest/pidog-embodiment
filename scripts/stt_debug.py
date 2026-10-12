@@ -101,8 +101,7 @@ def main():
           f"(wake word '{vl.WAKE_WORD}', Ctrl+C to stop)\n")
 
     show_partials = sys.stdout.isatty()
-    energy_above = 0     # the service's energy gate, replicated chunk by chunk
-    peak_rms = 0
+    energy = vl.UtteranceEnergy()  # the service's own gate logic — no replica
     last_partial_len = 0
 
     def clear_partial():
@@ -125,28 +124,24 @@ def main():
                 sys.exit(1)
 
             data = vl.amplify_audio(data)
-            rms = vl.compute_rms(data)
-            peak_rms = max(peak_rms, rms)
-            if rms < vl.ENERGY_THRESHOLD:
-                energy_above = 0
-            else:
-                energy_above += 1
-            gate_open = energy_above >= vl.ENERGY_WINDOW
+            energy.feed(vl.compute_rms(data))
+            phrase_peak = energy.peak
 
             if rec.AcceptWaveform(data):
+                speech_chunks = energy.harvest()
                 text = json.loads(rec.Result()).get("text", "").strip()
-                phrase_peak, peak_rms = peak_rms, 0
                 if not text:
                     continue
                 clear_partial()
                 # Same verdicts, same order as the service — but visible.
-                if not gate_open:
-                    print(f"  dropped (energy gate): '{text}'  "
-                          f"[peak level {phrase_peak:.0f} < {vl.ENERGY_THRESHOLD}"
-                          " at the end — speak louder or closer]")
-                    continue
                 if len(text) < vl.MIN_PHRASE_LENGTH or vl.is_just_noise(text):
                     print(f"  dropped (noise filter): '{text}'")
+                    continue
+                if speech_chunks < vl.ENERGY_WINDOW:
+                    print(f"  dropped (energy gate): '{text}'  "
+                          f"[{speech_chunks} chunk(s) above level {vl.ENERGY_THRESHOLD}, "
+                          f"need {vl.ENERGY_WINDOW}; peak {phrase_peak:.0f} — "
+                          "speak louder or closer]")
                     continue
                 print(f"HEARD '{text}'  [peak level {phrase_peak:.0f}]")
                 cleaned, woke = vl.fuzzy_wake_word_check(text)

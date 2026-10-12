@@ -70,14 +70,38 @@ def amplify_audio(data, gain=SOFTWARE_GAIN):
     except Exception:
         # If amplification fails, return original data
         return data
-# ─── Energy Gate (v2.2) ───
-# RMS energy threshold to filter silence/ambient noise BEFORE feeding to Vosk.
-# This prevents phantom word recognition from background noise.
+# ─── Energy Gate (v2.2, semantics fixed after issue #45) ───
+# Filters phantom recognitions born of silence/ambient noise. The original
+# version measured the chunks at the MOMENT a phrase finalized — but Vosk
+# finalizes a phrase when silence begins, so real speech that ends in silence
+# (i.e. every normal utterance) was dropped by lottery: the reporter's
+# stt_debug output showed perfectly recognized commands dying here. Energy is
+# now judged over the WHOLE utterance: a final is kept when enough chunks
+# anywhere in it were above the threshold.
 # Value is on the AMPLIFIED signal (after 8x gain).
 ENERGY_THRESHOLD = 500   # RMS value; lowered for better speech detection
-ENERGY_WINDOW = 2        # Number of consecutive above-threshold chunks needed
+ENERGY_WINDOW = 2        # chunks above threshold an utterance needs
 
-_energy_above_count = 0  # rolling counter of chunks above threshold
+
+class UtteranceEnergy:
+    """Above-threshold chunks in the CURRENT utterance. feed() every chunk;
+    harvest() when Vosk finalizes — it returns the count and starts the next
+    utterance at zero. Shared with scripts/stt_debug.py so the tool can never
+    drift from the service."""
+
+    def __init__(self):
+        self.chunks = 0
+        self.peak = 0
+
+    def feed(self, rms):
+        self.peak = max(self.peak, rms)
+        if rms >= ENERGY_THRESHOLD:
+            self.chunks += 1
+
+    def harvest(self):
+        chunks, self.chunks = self.chunks, 0
+        self.peak = 0
+        return chunks
 
 def compute_rms(data):
     """Compute RMS energy of 16-bit PCM audio data."""
@@ -323,7 +347,8 @@ def is_just_noise(text):
 
 
 def main():
-    global _speaking_until, _energy_above_count
+    global _speaking_until
+    energy = UtteranceEnergy()
     print("[voice-v2] Starting Nox voice loop v2.2 (fuzzy wake words + energy gate)...", flush=True)
 
     from vosk import Model, KaldiRecognizer
@@ -381,22 +406,10 @@ def main():
 
             # Amplify before feeding to Vosk
             data = amplify_audio(data)
-
-            # Energy gate (v2.2): skip silent/ambient chunks
-            global _energy_above_count
-            rms = compute_rms(data)
-            if rms < ENERGY_THRESHOLD:
-                _energy_above_count = 0
-                # Still feed to Vosk (to finalize any pending recognition)
-                # but don't start new recognitions from silence
-                rec.AcceptWaveform(data)
-                continue
-            _energy_above_count += 1
-            if _energy_above_count < ENERGY_WINDOW:
-                rec.AcceptWaveform(data)
-                continue
+            energy.feed(compute_rms(data))
 
             if rec.AcceptWaveform(data):
+                speech_chunks = energy.harvest()
                 result = json.loads(rec.Result())
                 text = result.get("text", "").strip()
 
@@ -404,6 +417,15 @@ def main():
                     continue
 
                 if is_just_noise(text):
+                    continue
+
+                # Energy gate: an utterance with no real speech energy is a
+                # phantom from ambient noise. Logged — a dropped phrase used
+                # to vanish without a trace (issue #45).
+                if speech_chunks < ENERGY_WINDOW:
+                    print(f"[voice-v2] Energy gate dropped: '{text}' "
+                          f"({speech_chunks} chunk(s) above level {ENERGY_THRESHOLD}, "
+                          f"need {ENERGY_WINDOW} — speak louder or closer)", flush=True)
                     continue
 
                 # Echo protection: ignore audio while TTS is playing
