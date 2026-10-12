@@ -41,7 +41,7 @@ SAMPLE_RATE = 16000
 
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nox_audio import find_capture_device, watch_stderr  # noqa: E402
+from nox_audio import find_capture_device, spoken, watch_stderr  # noqa: E402
 
 _mic = find_capture_device(os.environ.get("MIC_DEVICE"))
 CAPTURE_DEVICE = _mic["device"]
@@ -265,6 +265,48 @@ def fuzzy_wake_word_check(text):
     return text, False
 
 
+# ─── Self-echo detection (issue #45, voiceInput3 log) ───
+# The fixed 8 s window after sending text to the brain missed everything the
+# dog said LATER — a slow LLM reply, a battery warning — and the mic fed those
+# words back in as commands: the dog held a conversation with itself. The
+# daemon now remembers what it spoke ({"cmd": "speech_state"}); a recognised
+# phrase whose words are mostly the dog's own recent words is an echo.
+ECHO_TEXT_WINDOW = 12.0   # seconds after TTS ended in which a near-copy is echo
+ECHO_MIN_TOKENS = 3       # shorter phrases are too easy to match by accident
+ECHO_OVERLAP = 0.7        # fraction of heard words found in one spoken phrase
+
+
+def _echo_tokens(text):
+    tokens = []
+    for word in (text or "").split():
+        word = _plain(word).strip(".,!?;:'\"()«»")
+        if word:
+            tokens.append(word)
+    return tokens
+
+
+def is_own_speech(heard, speech_state):
+    """True when `heard` is the dog's own TTS coming back through the mic."""
+    if not isinstance(speech_state, dict) or not speech_state.get("ok"):
+        return False  # old daemon or daemon down — fall back to the time window
+    if speech_state.get("speaking"):
+        return True
+    heard_tokens = _echo_tokens(heard)
+    if len(heard_tokens) < ECHO_MIN_TOKENS:
+        return False  # never eat short real commands ("assis", "couché")
+    for entry in speech_state.get("recent") or []:
+        age = entry.get("age_s")
+        if age is None or age > ECHO_TEXT_WINDOW:
+            continue
+        spoken_set = set(_echo_tokens(entry.get("text")))
+        if not spoken_set:
+            continue
+        overlap = sum(t in spoken_set for t in heard_tokens) / len(heard_tokens)
+        if overlap >= ECHO_OVERLAP:
+            return True
+    return False
+
+
 def is_just_noise(text):
     """Check if the recognized text is just noise/fragments."""
     noise_words = {
@@ -369,6 +411,14 @@ def main():
                     print(f"[voice-v2] Echo suppressed: '{text}'", flush=True)
                     continue
 
+                # The dog's own words coming back through the mic — brain
+                # replies and battery warnings arrive AFTER the time window.
+                speech_state = send_to_daemon({"cmd": "speech_state", "_internal": True},
+                                              timeout=3)
+                if is_own_speech(text, speech_state):
+                    print(f"[voice-v2] Self-echo suppressed: '{text}'", flush=True)
+                    continue
+
                 print(f"[voice-v2] Heard: '{text}'", flush=True)
 
                 # Fuzzy wake word check
@@ -385,7 +435,7 @@ def main():
                 # If just the wake word with no content, acknowledge
                 if had_wake_word and len(cleaned) < MIN_PHRASE_LENGTH:
                     send_to_daemon({"cmd": "move", "action": "wag_tail", "steps": 2, "speed": 80})
-                    speak_via_daemon("Ja? Was ist?")
+                    speak_via_daemon(spoken("wake_ack"))
                     continue
 
                 process_text = cleaned if had_wake_word else text
@@ -426,7 +476,7 @@ def main():
         pass
     finally:
         process.terminate()
-        speak_via_daemon("Ich gehe schlafen. Gute Nacht!")
+        speak_via_daemon(spoken("goodnight"))
         set_rgb(0, 0, 80, "breath", 0.3)
         print("[voice-v2] Voice loop stopped.", flush=True)
 
