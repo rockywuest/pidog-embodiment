@@ -593,15 +593,13 @@ def process_voice_simple(msg):
 
 # ─── Main Loop ───
 # ─── Push Server (receives voice from bridge, zero latency) ───
-# Same key the bridge uses to reach us. NOTE: brain/nox_voice_relay.py (the
-# legacy 3-tier relay, not installed by install-brain.sh) binds 8889 too — run
-# one or the other, or give this one a different port.
+# Same key the bridge uses to reach us.
 PUSH_PORT = int(os.environ.get("BRAIN_CALLBACK_PORT", "8889"))
 # Filled by the push server, drained by the main loop while it waits between
 # inbox polls — so a pushed command runs at once instead of never: this used to
 # be a plain list nobody read, and every command waited for the 5 s inbox poll
 # (issue #42).
-_push_queue = queue.Queue()
+_push_queue: queue.Queue = queue.Queue()
 
 
 _seen = []  # (ts, text) of recently handled messages, newest last

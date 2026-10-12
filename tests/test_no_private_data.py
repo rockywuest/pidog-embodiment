@@ -1,6 +1,7 @@
 """Guard against private data in a public repository.
 
-A 48-hex gateway token sat in brain/nox_voice_relay.py as a default value, and
+A 48-hex gateway token sat in brain/nox_voice_relay.py (a legacy file, since
+removed — the token lives on in git history) as a default value, and
 went public with the commit that added it. Alongside it: the owner's tailnet
 addresses, their LAN subnet, their router's IP, and the first names and ages of
 three children — all as defaults in executable code.
