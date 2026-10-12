@@ -88,9 +88,9 @@ Built by [Nox](https://github.com/openclaw/openclaw) ⚡ (an AI assistant) and [
 
 ```
 Brain (Pi 5 / Desktop / Cloud)          Body (Pi 4 / Any Robot)
-├── nox_body_client.py    ◄────►       ├── nox_brain_bridge.py  (HTTP API)
-├── nox_voice_relay.py                 ├── nox_daemon.py        (Hardware + Servos)
-├── nox_voice_brain.py                 ├── nox_behavior_engine.py (FSM + Patrol)
+├── nox_voice_brain.py    ◄────►       ├── nox_brain_bridge.py  (HTTP API)
+├── nox_mcp_server.py                  ├── nox_daemon.py        (Hardware + Servos)
+├── nox_body_client.py                 ├── nox_behavior_engine.py (FSM + Patrol)
 └── telegram_bot.py (opt)              ├── nox_vision.py        (SmolVLM local AI)
                                        ├── nox_face_recognition.py (SCRFD+ArcFace)
                                        └── nox_voice_loop_v2.py (Vosk STT, wake word)
@@ -725,7 +725,6 @@ pidog-embodiment/
 ├── brain/                         # Runs on Pi 5 / Desktop
 │   ├── nox_body_client.py         # Python client for bridge API (37 functions)
 │   ├── nox_voice_brain.py         # LLM-powered voice processing
-│   ├── nox_voice_relay.py         # Voice relay for remote STT
 │   ├── nox_mcp_server.py          # The robot as MCP tools (Claude Code/Desktop, OpenClaw)
 │   ├── telegram_bot.py            # Telegram remote control
 │   ├── requirements.txt
@@ -739,7 +738,6 @@ pidog-embodiment/
 │   ├── nox_face_recognition.py    # SCRFD detection + ArcFace recognition
 │   ├── pidog_memory.py            # Drift-style memory with co-occurrence + decay
 │   ├── nox_voice_loop_v2.py       # Wake word + Vosk STT (what nox-voice runs)
-│   ├── nox_voice_loop_v3.py       # Experimental: faster-whisper + VAD variant
 │   ├── nox_control.py             # Direct servo control utilities
 │   ├── nox_i2c_diag.py            # I2C/MCU reachability diagnostics (issue #12)
 │   ├── nox_motion.py              # Draining the SDK's motion queue (issue #25)
