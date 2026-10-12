@@ -677,6 +677,26 @@ def cmd_photo(path=None):
 
 _last_speak = {"ok": None, "note": "nothing spoken since start"}
 
+# Everything the dog said recently, so the voice loop can recognise its own
+# words coming back through the microphone. The fixed 8 s echo window missed
+# brain replies and battery warnings that arrived later, and the dog started
+# answering itself in a loop (issue #45, voiceInput3 log).
+_recent_speech = []  # [{"text", "start", "end" (None while speaking)}], newest last
+_recent_speech_lock = threading.Lock()
+
+
+def cmd_speech_state():
+    """Is the dog speaking, and what did it say lately? Polled by the voice
+    loop on every recognised phrase — cheap by design."""
+    now = time.time()
+    with _recent_speech_lock:
+        speaking = any(e["end"] is None and now - e["start"] < 120
+                       for e in _recent_speech)
+        recent = [{"text": e["text"],
+                   "age_s": None if e["end"] is None else round(now - e["end"], 1)}
+                  for e in _recent_speech]
+    return {"ok": True, "speaking": speaking, "recent": recent}
+
 
 def cmd_speak(text, wait=False):
     """TTS via Piper, played through the robot's sound engine (or the aplay stand-in).
@@ -706,9 +726,14 @@ def cmd_speak(text, wait=False):
         # Use unique wav per call to avoid race conditions
         wav = f"/tmp/nox_speak_{int(time.time()*1000) % 100000}.wav"
         music = getattr(dog, "music", None) or AplayMusic(device=_PLAYBACK_DEVICE)
+        entry = {"text": words, "start": time.time(), "end": None}
+        with _recent_speech_lock:
+            _recent_speech.append(entry)
+            del _recent_speech[:-8]
         try:
             result = speak_text(words, PIPER_BIN, voice["model"], music, wav, play_lock=dog_lock)
         finally:
+            entry["end"] = time.time()
             try:
                 os.remove(wav)
             except OSError:
@@ -1082,6 +1107,7 @@ COMMANDS = {
     "rgb": lambda args: cmd_rgb(args.get("r", 128), args.get("g", 0), args.get("b", 255), args.get("mode", "breath"), args.get("bps", 0.8)),
     "photo": lambda args: cmd_photo(args.get("path")),
     "speak": lambda args: cmd_speak(args.get("text", ""), wait=bool(args.get("wait"))),
+    "speech_state": lambda args: cmd_speech_state(),
     "sound": lambda args: cmd_sound(args.get("name", "single_bark_1")),
     "combo": lambda args: cmd_combo(args.get("sequence", "stand:1:60")),
     "wake": lambda args: cmd_wake(),
