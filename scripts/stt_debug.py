@@ -76,16 +76,24 @@ def main():
         print(f"[stt-debug] No microphone found: {vl._mic['reason']}")
         sys.exit(1)
 
-    from vosk import Model, KaldiRecognizer, SetLogLevel
+    try:
+        from vosk import Model, KaldiRecognizer, SetLogLevel
+    except ImportError:
+        print("[stt-debug] vosk is not installed — pip3 install vosk")
+        sys.exit(1)
     SetLogLevel(-1)  # keep Kaldi's boot log off the screen
     print("[stt-debug] Loading model (takes a few seconds)...")
     model = Model(vl.VOSK_MODEL_PATH)
     rec = KaldiRecognizer(model, vl.SAMPLE_RATE)
 
-    process = subprocess.Popen(
-        ["arecord", "-D", vl.CAPTURE_DEVICE, "-f", "S16_LE",
-         "-r", str(vl.SAMPLE_RATE), "-c", "1", "-t", "raw"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        process = subprocess.Popen(
+            ["arecord", "-D", vl.CAPTURE_DEVICE, "-f", "S16_LE",
+             "-r", str(vl.SAMPLE_RATE), "-c", "1", "-t", "raw"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        print("[stt-debug] arecord not found — sudo apt install alsa-utils")
+        sys.exit(1)
     from nox_audio import watch_stderr
     stderr_lines = watch_stderr(process)
 
