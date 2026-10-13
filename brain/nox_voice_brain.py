@@ -183,9 +183,11 @@ Format:
 {"speak":"Your spoken response","actions":["action1"],"emotion":"happy"}
 
 Fields:
-- speak: What you say (short, 1-2 sentences, read aloud via TTS). {LANGUAGE_RULE}
+- speak: What you say (short, 1-2 sentences, read aloud via TTS). {LANGUAGE_RULE} Plain spoken words only — no *stage directions*, no emoji, no markdown: physical behavior goes in "actions", never in "speak".
 - actions: List of physical actions (can be empty [])
 - emotion: happy|sad|curious|excited|alert|sleepy|love|think|neutral
+
+About your battery: only state what the context tells you. If the context gives no battery value, say you don't know — never invent a level or claim to be out of battery.
 
 Available actions: forward, backward, turn_left, turn_right, stand, sit, lie, wag_tail, bark, trot, doze_off, stretch, push_up, howling, shake_head, pant, nod
 
@@ -361,6 +363,22 @@ def parse_response(text):
     return {"speak": text, "actions": [], "emotion": "neutral", "_no_json": True}
 
 
+_STAGE_DIRECTIONS = re.compile(r"\*[^*\n]{0,120}\*")
+
+
+def sanitize_speech(text):
+    """LLM roleplay must never reach the TTS: Piper read '*remue la queue*'
+    aloud as 'astérisque remue la queue astérisque' (issue #45, log 6).
+    Strips *stage directions*, stray asterisks/underscores and markdown
+    leftovers; returns None when nothing speakable remains."""
+    if not text:
+        return None
+    cleaned = _STAGE_DIRECTIONS.sub(" ", text)
+    cleaned = cleaned.replace("*", " ").replace("_", " ").replace("`", " ")
+    cleaned = " ".join(cleaned.split())
+    return cleaned or None
+
+
 # ─── Voice Processing ───
 def process_voice_intelligent(msg):
     """Process voice input using Claude AI."""
@@ -406,8 +424,8 @@ def process_voice_intelligent(msg):
     
     if response_text:
         parsed = parse_response(response_text)
-        
-        speak_text = parsed.get("speak", response_text)
+
+        speak_text = sanitize_speech(parsed.get("speak", response_text))
         actions = parsed.get("actions", [])
         if parsed.get("_no_json") and not actions:
             # A small model that ignored the JSON format would make the dog
@@ -446,13 +464,22 @@ def process_voice_intelligent(msg):
         bridge_post("/combo", combo_data)
         
         # Update conversation history
-        conversation.add_exchange(text, speak_text)
+        conversation.add_exchange(text, speak_text or "")  # sanitized-away speak is not "None" in history
         
         print(f"[brain] Response: '{speak_text}' actions={actions} emotion={emotion}", flush=True)
     else:
-        # Fallback: the LLM call failed (timeout, API error) — the bridge
-        # itself is fine, so don't claim the brain is unreachable.
-        bridge_post("/speak", {"text": _REPLIES["thinking"][reply_language(text)].format(text=text)})
+        # The LLM call failed (timeout, API error). The keyword parser still
+        # understands plain commands — a dog that answers "je réfléchis
+        # encore" to "debout" while its LLM is down looks broken, and the
+        # reporter read it exactly that way ("ordre non reconnu alors que
+        # tout semble ok?", issue #45 log 5).
+        cmd = parse_simple_command(text)
+        lang = reply_language(text)
+        if cmd["actions"]:
+            print(f"[brain] LLM unreachable — keyword fallback: {cmd['actions']}", flush=True)
+            bridge_post("/combo", {"actions": cmd["actions"], "speak": _REPLIES["ok"][lang]})
+        else:
+            bridge_post("/speak", {"text": _REPLIES["thinking"][lang].format(text=text)})
 
 
 # ─── Simple Fallback (no API key) ───
