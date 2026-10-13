@@ -429,6 +429,34 @@ Without a model (or without a USB mic) `nox-voice` exits cleanly and voice
 input stays off — `./scripts/doctor.sh` tells you which of the two is missing.
 Text commands via `POST /voice/input` work either way.
 
+### What the dog understands
+
+Say a wake word (`WAKE_WORD`, several allowed: `milou,tintin`), then your
+command. In `NOX_MODE=chat` (default) the LLM understands **free language** in
+any phrasing and can also just talk; in `NOX_MODE=commands` — and whenever the
+LLM is unreachable — exactly these keywords work (German / English / French),
+several per sentence:
+
+| Action | 🇩🇪 | 🇬🇧 | 🇫🇷 |
+|---|---|---|---|
+| sit | setz dich, sitz | sit | assis, assieds-toi |
+| lie | platz, leg dich | lie down, down | couché, allonge-toi |
+| stand / stop | steh, stopp, halt | stand, stop | debout, lève-toi, arrête, stop |
+| forward | komm, vorwärts, lauf | come, forward, walk, go | viens, avance, marche |
+| backward | zurück | back, reverse | recule, arrière |
+| turn left/right | links / rechts | left / right | gauche / droite |
+| wag tail | wedel, schwanz | wag, tail | remue, queue |
+| bark | bell, gib laut | bark | aboie |
+| shake head | schüttel | shake head | secoue |
+| stretch | streck dich | stretch | étire-toi |
+| sleep | schlaf | sleep, nap | dors |
+| push-up | Liegestütz | push up | pompes |
+| howl | heul | howl | hurle |
+
+Plus: praise ("guter Hund" / "good dog" / "bon chien" → tail wag) and
+"who are you?" in all three languages. The authoritative list lives in
+`brain/nox_voice_brain.py` (`_INTENTS`).
+
 **The dog doesn't understand you?** See what it actually hears — live, through
 exactly the service's pipeline (same mic, gain, energy gate, wake word):
 

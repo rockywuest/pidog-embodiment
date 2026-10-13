@@ -98,7 +98,8 @@ def main():
     stderr_lines = watch_stderr(process)
 
     print(f"[stt-debug] Listening on {vl.CAPTURE_DEVICE} — speak! "
-          f"(wake word '{vl.WAKE_WORD}', Ctrl+C to stop)\n")
+          f"(wake word{'s' if len(vl.WAKE_WORDS) > 1 else ''} "
+          f"{', '.join(vl.WAKE_WORDS)}, Ctrl+C to stop)\n")
 
     show_partials = sys.stdout.isatty()
     energy = vl.UtteranceEnergy()  # the service's own gate logic — no replica

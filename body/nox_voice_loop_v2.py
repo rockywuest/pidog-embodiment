@@ -79,7 +79,14 @@ def amplify_audio(data, gain=SOFTWARE_GAIN):
 # now judged over the WHOLE utterance: a final is kept when enough chunks
 # anywhere in it were above the threshold.
 # Value is on the AMPLIFIED signal (after 8x gain).
-ENERGY_THRESHOLD = 500   # RMS value; lowered for better speech detection
+# Per-microphone setting (nox.env): quiet mics drop real phrases here — the
+# reporter's VoiceHAT lost "prends une photo" at the 500 default (issue #45,
+# log 6). stt_debug.py shows the measured levels; lower this to match.
+try:
+    ENERGY_THRESHOLD = int(float(os.environ.get("ENERGY_THRESHOLD", "500") or 500))
+except ValueError:
+    print("[voice-v2] WARNING: ENERGY_THRESHOLD is not a number — using 500", flush=True)
+    ENERGY_THRESHOLD = 500
 ENERGY_WINDOW = 2        # chunks above threshold an utterance needs
 
 
@@ -128,21 +135,33 @@ def _plain(word):
                    if not unicodedata.combining(c))
 
 
-WAKE_WORD = _plain((os.environ.get("WAKE_WORD") or "nox").strip())
+# Several wake words are allowed, comma-separated: WAKE_WORD=milou,tintin
+# (requested in issue #45 — pick words the STT model knows well).
+WAKE_WORDS = []
+for _w in (os.environ.get("WAKE_WORD") or "nox").replace(";", ",").split(","):
+    _w = _plain(_w.strip())
+    if _w and _w not in WAKE_WORDS:
+        WAKE_WORDS.append(_w)
+if not WAKE_WORDS:
+    WAKE_WORDS = ["nox"]
+WAKE_WORD = WAKE_WORDS[0]  # the primary word, shown in prompts and tools
 # An everyday word as wake word fires on everything: WAKE_WORD=hey woke the dog
 # on every "hey ..." a French TV said (issue #45 log). Warn, loudly.
 _COMMON_WORDS = {"hey", "he", "eh", "hi", "na", "hallo", "ok", "oui", "non", "ja",
                  "nein", "yes", "no", "le", "la", "de", "un", "une", "et", "the", "a"}
-if WAKE_WORD in _COMMON_WORDS or len(WAKE_WORD) < 3:
-    print(f"[voice-v2] WARNING: WAKE_WORD='{WAKE_WORD}' is an everyday word — the dog "
-          "will wake constantly. Pick a distinctive word (e.g. milou, rex, nox).", flush=True)
-print(f"[voice-v2] Wake word: '{WAKE_WORD}' (also with hey/hallo/... in front, "
+for _w in WAKE_WORDS:
+    if _w in _COMMON_WORDS or len(_w) < 3:
+        print(f"[voice-v2] WARNING: WAKE_WORD='{_w}' is an everyday word — the dog "
+              "will wake constantly. Pick a distinctive word (e.g. milou, rex, nox).", flush=True)
+print(f"[voice-v2] Wake word{'s' if len(WAKE_WORDS) > 1 else ''}: "
+      f"{', '.join(WAKE_WORDS)} (also with hey/hallo/... in front, "
       f"and one letter off)", flush=True)
 WAKE_PREFIXES = ["hallo", "hey", "hi", "na", "he", "eh"]  # "hallo nox" etc.
-WAKE_WORDS_EXACT = [WAKE_WORD] + [f"{p} {WAKE_WORD}" for p in WAKE_PREFIXES]
-if WAKE_WORD == "nox":
+WAKE_WORDS_EXACT = list(WAKE_WORDS) + [f"{p} {w}" for w in WAKE_WORDS
+                                       for p in WAKE_PREFIXES]
+if "nox" in WAKE_WORDS:
     # Mis-transcriptions seen in the wild for the default name
-    WAKE_WORDS_EXACT = ["nox", "knox", "inox"] + WAKE_WORDS_EXACT[1:]
+    WAKE_WORDS_EXACT = ["knox", "inox"] + WAKE_WORDS_EXACT
 
 SILENCE_TIMEOUT = 2.0
 MIN_PHRASE_LENGTH = 2
@@ -267,18 +286,18 @@ def fuzzy_wake_word_check(text):
                 cleaned = cleaned[1:].strip()
             return cleaned, True
     
-    # 2. Single word fuzzy match: any word within edit distance 1 of the wake word
+    # 2. Single word fuzzy match: any word within edit distance 1 of a wake word
     for i, word in enumerate(plain_words):
-        if levenshtein(word, WAKE_WORD) <= 1:
+        if any(levenshtein(word, ww) <= 1 for ww in WAKE_WORDS):
             # Found fuzzy "nox" — rest of text is the content
             remaining = " ".join(words[i+1:])
             return remaining, True
-    
-    # 3. Prefix + fuzzy: "hallo" + word close to "nox"
+
+    # 3. Prefix + fuzzy: "hallo" + word close to a wake word
     for i, word in enumerate(plain_words):
         if word in WAKE_PREFIXES and i + 1 < len(plain_words):
             next_word = plain_words[i + 1]
-            if levenshtein(next_word, WAKE_WORD) <= 2:  # more lenient with prefix
+            if any(levenshtein(next_word, ww) <= 2 for ww in WAKE_WORDS):  # more lenient with prefix
                 remaining = " ".join(words[i+2:])
                 return remaining, True
     
@@ -480,10 +499,13 @@ def main():
                 # Small head nod
                 send_to_daemon({"cmd": "move", "action": "nod_lethargy", "steps": 1, "speed": 90})
 
-                # Echo protection: suppress audio for estimated brain response + TTS time
-                # Brain takes ~2s, TTS takes ~3-5s → suppress for 8s
-                _speaking_until = time.time() + 8.0
-                print("[voice-v2] Echo suppression active for 8s", flush=True)
+                # Brief quiet window for the dog's own motion noise (the nod).
+                # This used to be a blind 8 s guess at the brain's reply time
+                # and ate the user's real follow-ups ('cathy assis', 'remue la
+                # queue' in issue #45 log 6) — actual TTS echo is caught by the
+                # daemon's speech_state ground truth above.
+                _speaking_until = time.time() + 2.5
+                print("[voice-v2] Echo suppression active for 2.5s", flush=True)
 
                 time.sleep(0.5)
                 set_rgb(128, 0, 255, "breath", 0.8)
