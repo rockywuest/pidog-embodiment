@@ -464,7 +464,7 @@ def process_voice_intelligent(msg):
         bridge_post("/combo", combo_data)
         
         # Update conversation history
-        conversation.add_exchange(text, speak_text)
+        conversation.add_exchange(text, speak_text or "")  # sanitized-away speak is not "None" in history
         
         print(f"[brain] Response: '{speak_text}' actions={actions} emotion={emotion}", flush=True)
     else:
