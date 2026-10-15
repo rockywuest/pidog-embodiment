@@ -21,6 +21,7 @@ import time
 import socket
 import urllib.request
 import urllib.error
+import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -174,8 +175,13 @@ else:
     _LANGUAGE_RULE = (f"Always answer in {LANG_NAMES[NOX_LANG]}, whatever language the "
                       "user speaks — the robot's voice speaks only that language.")
 
+# What the dog calls itself. A robot woken with "cathy" must not introduce
+# itself as "Nox" — Piper even mispronounced it "knox" (issue #45, log 7).
+# Set it to the wake word you chose; the default keeps the project's mascot.
+ROBOT_NAME = os.environ.get("ROBOT_NAME", "").strip() or "Nox"
+
 # System prompt for PiDog voice interactions
-SYSTEM_PROMPT = """You are Nox, an AI robot dog (SunFounder PiDog). You have a real physical body with 4 legs, a moveable head, RGB LEDs, and a speaker.
+SYSTEM_PROMPT = "You are " + ROBOT_NAME + """, an AI robot dog (SunFounder PiDog). You have a real physical body with 4 legs, a moveable head, RGB LEDs, and a speaker.
 
 IMPORTANT: You ALWAYS and EXCLUSIVELY respond with a single JSON object. No text before or after. Only JSON.
 
@@ -297,6 +303,28 @@ def bridge_post(path, data, timeout=15):
 
 
 # ─── Claude API ───
+def llm_unreachable_hint(reason, url=None):
+    """One sentence that saves an evening: "connection refused" against a
+    remote Ollama is almost always OLLAMA_HOST, because Ollama binds to
+    127.0.0.1 unless told otherwise. Verified in the field (issue #45, log 7:
+    the LLM "on brain" looked dead while `ollama run` worked fine there)."""
+    url = OPENAI_URL if url is None else url
+    text = str(reason).lower()
+    if "refused" not in text and "no route to host" not in text:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host, port = parsed.hostname or "", parsed.port
+    except ValueError:
+        return ""
+    if port != 11434 or host in ("127.0.0.1", "localhost", "::1"):
+        return ""
+    return (f" — {host} looks like Ollama on another machine, and Ollama only "
+            "listens on 127.0.0.1 by default. On that machine set "
+            "OLLAMA_HOST=0.0.0.0 (then restart ollama) and allow port 11434 "
+            "through its firewall.")
+
+
 def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     """Call OpenAI-compatible API for voice response."""
     if not LLM_CONFIGURED:
@@ -343,7 +371,8 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
             print(f"[brain] LLM timed out after {LLM_TIMEOUT}s (model: {OPENAI_MODEL}) — "
                   f"local CPU inference can be slow; raise LLM_TIMEOUT if this repeats", flush=True)
         else:
-            print(f"[brain] LLM API error: {e}", flush=True)
+            print(f"[brain] LLM API error: {e}{llm_unreachable_hint(reason)}",
+                  flush=True)
         return None
 
 
@@ -520,7 +549,8 @@ _REPLIES = {
                 "fr": "Attention ! Ma batterie est presque vide !"},
     "ok": {"de": "Mach ich!", "en": "On it!", "fr": "D'accord !"},
     "praise": {"de": "Gerne!", "en": "You're welcome!", "fr": "Avec plaisir !"},
-    "who": {"de": "Ich bin Nox!", "en": "I'm Nox!", "fr": "Je suis Nox !"},
+    "who": {"de": f"Ich bin {ROBOT_NAME}!", "en": f"I'm {ROBOT_NAME}!",
+            "fr": f"Je suis {ROBOT_NAME} !"},
     "unknown": {"de": "Das verstehe ich nicht: {text}", "en": "I don't understand: {text}",
                 "fr": "Je ne comprends pas : {text}"},
 }

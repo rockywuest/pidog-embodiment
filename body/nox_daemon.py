@@ -26,8 +26,15 @@ os.environ["SDL_AUDIODRIVER"] = "alsa"
 # Now: honour an explicit AUDIODEV when its card really exists, otherwise pick a
 # detected card, otherwise leave AUDIODEV unset and let ALSA use its default.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nox_audio import (AplayMusic, describe_cards, find_piper_voice,  # noqa: E402
+from nox_audio import (AplayMusic, describe_cards, env_int, find_piper_voice,  # noqa: E402
                        resolve_device, speak_text)
+
+# How fast the dog walks (forward/backward/turns/trot), 1-100. SunFounder's
+# own demos trot at 98; our old fixed 80 made every gait look like wading
+# through honey (issue #45, log 7: "avance et recul mouvements tres lents").
+# Non-gait actions (sit, wag_tail, ...) keep their own speeds.
+WALK_SPEED = max(1, min(100, env_int("WALK_SPEED", 95)))
+GAIT_ACTIONS = {"forward", "backward", "turn_left", "turn_right", "trot"}
 
 _audio_device = resolve_device(os.environ.get("AUDIODEV"))
 _PLAYBACK_DEVICE = _audio_device["device"]
@@ -393,8 +400,11 @@ def cmd_status():
     return info
 
 
-def cmd_move(action, steps=3, speed=80, internal=False):
-    """Execute a movement action."""
+def cmd_move(action, steps=3, speed=None, internal=False):
+    """Execute a movement action. No speed given → WALK_SPEED for gaits,
+    80 for everything else (the old fixed default)."""
+    if speed is None:
+        speed = WALK_SPEED if action in GAIT_ACTIONS else 80
     _mark_activity(internal=internal)
     if _idle_state == "sleeping":
         # Re-init servos before moving
@@ -1101,7 +1111,7 @@ def cmd_three_way_scan():
 COMMANDS = {
     "status": lambda args: cmd_status(),
     "servo_test": lambda args: cmd_servo_test(),
-    "move": lambda args: cmd_move(args.get("action", "stand"), args.get("steps", 3), args.get("speed", 80), internal=args.get("_internal", False)),
+    "move": lambda args: cmd_move(args.get("action", "stand"), args.get("steps", 3), args.get("speed"), internal=args.get("_internal", False)),
     "head": lambda args: cmd_head(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0), args.get("smooth", True), internal=args.get("_internal", False)),
     "head_ema": lambda args: cmd_head_ema(args.get("yaw", 0), args.get("roll", 0), args.get("pitch", 0), internal=args.get("_internal", False)),
     "rgb": lambda args: cmd_rgb(args.get("r", 128), args.get("g", 0), args.get("b", 255), args.get("mode", "breath"), args.get("bps", 0.8)),

@@ -363,6 +363,21 @@ def spoken(key, env=None):
     return SPOKEN[key][body_language(env)]
 
 
+def env_int(name, default, environ=None):
+    """A whole number from the environment ("95", "95.0", "300,0"), or the
+    default. Same forgiving spirit as env_volts: a typo in nox.env must not
+    crash a robot, only print what was ignored."""
+    environ = os.environ if environ is None else environ
+    raw = (environ.get(name) or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        return int(float(raw.replace(",", ".")))
+    except ValueError:
+        print(f"[nox] {name}={raw!r} is not a number — using {default}", flush=True)
+        return int(default)
+
+
 def env_volts(name, default, environ=None):
     """A voltage from the environment, typo-tolerant ("6,8", "6.8V"), or the
     default. The brain parses BATTERY_LOW_V exactly like this — one concept,
