@@ -187,6 +187,17 @@ sudo systemctl start nox-brain
 > model (e.g. `llama3.1:8b`, `qwen2.5:7b`) follows the JSON format much more
 > reliably.
 
+> **Where should Ollama run?** Two setups work:
+> - **On the robot itself** (needs a Pi 5): `OPENAI_URL=http://127.0.0.1:11434/v1/chat/completions`.
+>   Field-tested — a Pi 5 runs `llama3.2` well enough for real conversations,
+>   with no network in the loop.
+> - **On a bigger machine**: point `OPENAI_URL` at that machine's IP. **Ollama
+>   only listens on `127.0.0.1` by default** — on the big machine set
+>   `OLLAMA_HOST=0.0.0.0`, restart Ollama, and open port 11434 in its firewall.
+>   If the dog only ever says "I'm still thinking…" while `ollama run` works
+>   fine on the big machine, this is why — the brain's journal names it:
+>   `journalctl -u nox-brain | grep LLM`.
+
 ### Configuration — where which setting lives
 
 Both machines read plain env files; edit, then restart the named service.
@@ -206,6 +217,7 @@ Every key is documented with examples in the file itself.
 | `NOX_LANG` | Language of the dog's own phrases (battery etc.) | from voice |
 | `NOX_API_TOKEN` / `NOX_RATE_LIMIT` | Bridge auth + rate limit (see Security) | off / 600 |
 | `NOX_NO_AUTO` | `1` disables autonomous behavior at boot | autonomous on |
+| `WALK_SPEED` | Gait speed (forward/backward/turns), 1–100 | `95` |
 
 **Brain — `/etc/default/nox-brain`** (restart: `sudo systemctl restart nox-brain`; verify: `journalctl -u nox-brain | grep Language`)
 
@@ -216,6 +228,7 @@ Every key is documented with examples in the file itself.
 | `OPENAI_API_KEY` | Only for cloud endpoints | — |
 | `NOX_MODE` | `chat` (LLM answers anything) or `commands` (keyword commands only — deterministic, free, TV-proof) | `chat` |
 | `NOX_LANG` | Reply language: `auto` (the speaker's) or fixed `de`/`en`/`fr` | `auto` |
+| `ROBOT_NAME` | What the dog calls itself — set it to your wake word | `Nox` |
 | `BATTERY_LOW_V` | Battery warning threshold (volts) | `6.8` |
 | `NOX_API_TOKEN` | Must match the robot's, if set there | — |
 
@@ -481,6 +494,10 @@ client becomes the dog's brain; `nox-brain` is not needed for this.
 claude mcp add pidog --env PIDOG_HOST=<robot-ip-or-name> --   python3 /path/to/pidog-embodiment/brain/nox_mcp_server.py
 # then:  "take a photo, tell me what you see, and if a person is there, wag your tail"
 ```
+
+There is no command syntax to learn: once `/mcp` shows the server connected,
+just **type what you want in the Claude Code chat**, in any language — "fais
+asseoir le chien", "patrol for a minute" — and Claude picks the right tools.
 
 Claude Desktop (`claude_desktop_config.json`) and other MCP clients:
 

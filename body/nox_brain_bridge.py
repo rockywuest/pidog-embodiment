@@ -1017,7 +1017,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif path == "/move":
             # Higher-level movement: distance_cm or angle_deg (Sprint 4)
             direction = body.get("direction", "forward")
-            speed = body.get("speed", 70)
+            # No speed given → let the daemon pick (WALK_SPEED for gaits).
+            speed = body.get("speed")
             if direction in ("forward", "backward"):
                 dist = body.get("distance_cm", 15)
                 steps = max(1, min(30, round(dist / STEP_DISTANCE_CM)))
@@ -1026,7 +1027,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 steps = max(1, min(20, round(angle / STEP_ANGLE_DEG)))
             else:
                 steps = body.get("steps", 3)
-            r = send_to_daemon({"cmd": "move", "action": direction, "steps": steps, "speed": speed})
+            cmd = {"cmd": "move", "action": direction, "steps": steps}
+            if speed is not None:
+                cmd["speed"] = speed
+            r = send_to_daemon(cmd)
             r["steps_executed"] = steps
             r["direction"] = direction
             self._send_json(r)

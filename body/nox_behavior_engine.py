@@ -770,7 +770,7 @@ class BehaviorEngine:
 
         # Forward is clear → walk
         if self._patrol_steps < self._patrol_max_steps:
-            self.daemon({"cmd": "move", "action": "forward", "steps": 2, "speed": 70})
+            self.daemon({"cmd": "move", "action": "forward", "steps": 2})
             self._patrol_steps += 2
         else:
             # Re-evaluate after max steps
@@ -793,18 +793,18 @@ class BehaviorEngine:
         print(f"[behavior] Avoidance: best direction = {direction} ({dist}cm)", flush=True)
 
         if direction == "left":
-            self.daemon({"cmd": "move", "action": "turn_left", "steps": 2, "speed": 70})
+            self.daemon({"cmd": "move", "action": "turn_left", "steps": 2})
         elif direction == "right":
-            self.daemon({"cmd": "move", "action": "turn_right", "steps": 2, "speed": 70})
+            self.daemon({"cmd": "move", "action": "turn_right", "steps": 2})
         else:
             # No good direction → backup and try again
-            self.daemon({"cmd": "move", "action": "backward", "steps": 2, "speed": 60})
+            self.daemon({"cmd": "move", "action": "backward", "steps": 2})
             time.sleep(1)
             # Random turn to get unstuck
             if random.random() > 0.5:
-                self.daemon({"cmd": "move", "action": "turn_left", "steps": 3, "speed": 70})
+                self.daemon({"cmd": "move", "action": "turn_left", "steps": 3})
             else:
-                self.daemon({"cmd": "move", "action": "turn_right", "steps": 3, "speed": 70})
+                self.daemon({"cmd": "move", "action": "turn_right", "steps": 3})
             self.obstacles.record_stuck()
 
         if _HAS_MEMORY:
