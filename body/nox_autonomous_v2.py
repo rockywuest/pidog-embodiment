@@ -362,7 +362,7 @@ class AutonomousBehavior:
                     if "wait" in step:
                         time.sleep(step["wait"])
                     elif "action" in step:
-                        self.daemon({"cmd": "move", "action": step["action"], "steps": 1, "speed": 80})
+                        self.daemon({"cmd": "move", "action": step["action"], "steps": 1})
                     elif "head" in step:
                         self.daemon({"cmd": "head", **step["head"]})
                     elif "rgb" in step:
