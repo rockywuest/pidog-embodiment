@@ -222,6 +222,22 @@ def send_to_daemon(cmd_json, timeout=10):
         return {"error": str(e)}
 
 
+def wait_for_daemon(max_wait=20.0, interval=0.5):
+    """All three body services start together, and the daemon needs a few
+    seconds for the servos. Asking it for anything before then printed
+    'daemon error: Connection refused' at every start — harmless, but it
+    sits at the top of every log a user sends (issue #45, logs 8 and 10)."""
+    deadline = time.time() + max_wait
+    while True:
+        try:
+            socket.create_connection((DAEMON_HOST, DAEMON_PORT), timeout=1.0).close()
+            return True
+        except OSError:
+            if time.time() >= deadline:
+                return False
+            time.sleep(interval)
+
+
 def set_rgb(r, g, b, mode="breath", bps=0.8):
     send_to_daemon({"cmd": "rgb", "r": r, "g": g, "b": b, "mode": mode, "bps": bps})
 
@@ -401,6 +417,9 @@ def main():
     if not CAPTURE_DEVICE:
         print(f"[voice-v2] No microphone: {_mic['reason']}. Voice input stays off.", flush=True)
         return
+    if not wait_for_daemon():
+        print(f"[voice-v2] Body daemon not reachable on port {DAEMON_PORT} after 20s — "
+              "listening anyway; check: systemctl status nox-body", flush=True)
     print("[voice-v2] Starting audio capture...", flush=True)
     process = subprocess.Popen(
         ["arecord", "-D", CAPTURE_DEVICE, "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw"],

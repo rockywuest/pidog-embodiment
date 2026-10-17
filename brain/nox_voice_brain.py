@@ -227,7 +227,7 @@ User: "Sitz!"
 {"speak":"Mach ich!","actions":["sit"],"emotion":"happy"}
 
 User: "Assis !"
-{"speak":"D'accord !","actions":["sit"],"emotion":"happy"}
+{"speak":"OK !","actions":["sit"],"emotion":"happy"}
 
 User: "stand up and bark"
 {"speak":"Woof! Here I am!","actions":["stand","bark"],"emotion":"excited"}
@@ -268,10 +268,10 @@ User: "how are you"
 {"speak":"I'm great! Ready to play!","actions":["wag_tail"],"emotion":"happy"}""",
     "fr": """Examples:
 User: "Assis !"
-{"speak":"D'accord !","actions":["sit"],"emotion":"happy"}
+{"speak":"OK !","actions":["sit"],"emotion":"happy"}
 
 User: "sit down and bark"
-{"speak":"D'accord — ouaf !","actions":["sit","bark"],"emotion":"excited"}
+{"speak":"OK — ouaf !","actions":["sit","bark"],"emotion":"excited"}
 
 User: "Comment vas-tu ?"
 {"speak":"Je vais très bien ! Prêt à jouer !","actions":["wag_tail"],"emotion":"happy"}""",
@@ -590,7 +590,9 @@ _REPLIES = {
     "battery": {"de": "Achtung! Meine Batterie ist fast leer!",
                 "en": "Careful! My battery is almost empty!",
                 "fr": "Attention ! Ma batterie est presque vide !"},
-    "ok": {"de": "Mach ich!", "en": "On it!", "fr": "D'accord !"},
+    # French: Vosk hears the dog's own "D'accord !" as 'dakar' — an echo no
+    # check can match (issue #45, log 10). "ok" heard back is dropped as filler.
+    "ok": {"de": "Mach ich!", "en": "On it!", "fr": "OK !"},
     "praise": {"de": "Gerne!", "en": "You're welcome!", "fr": "Avec plaisir !"},
     "who": {"de": f"Ich bin {ROBOT_NAME}!", "en": f"I'm {ROBOT_NAME}!",
             "fr": f"Je suis {ROBOT_NAME} !"},
