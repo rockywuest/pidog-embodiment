@@ -35,9 +35,9 @@ from enum import Enum
 from collections import deque
 
 try:  # on the robot body/ is on sys.path; tests import it as a package
-    from nox_audio import env_volts, spoken
+    from nox_audio import env_int, env_volts, spoken
 except ImportError:  # pragma: no cover - import path depends on the caller
-    from body.nox_audio import env_volts, spoken
+    from body.nox_audio import env_int, env_volts, spoken
 
 # Optional memory
 try:
@@ -59,6 +59,13 @@ if BATTERY_CRITICAL_V >= BATTERY_LOW_V:
     print(f"[behavior] BATTERY_CRITICAL_V ({BATTERY_CRITICAL_V}) must be below "
           f"BATTERY_LOW_V ({BATTERY_LOW_V}) — using defaults 6.8/6.2", flush=True)
     BATTERY_LOW_V, BATTERY_CRITICAL_V = 6.8, 6.2
+# A person's command wins over autonomy (issue #68: "lie" was undone by the
+# patrol within two seconds). Seconds the engine keeps its paws still after
+# any /action, /combo or /move from outside — voice, MCP, curl.
+USER_HOLD_S = max(0, env_int("BEHAVIOR_USER_HOLD_S", 60))
+TOUCH_WAG_COOLDOWN_S = 10.0  # a noisy touch pad must not wag non-stop
+BLIND_PATROL_TICKS = 2       # ticks without a distance reading → stop patrol
+BLIND_PATROL_PAUSE_S = 300   # then no mood-driven patrol for this long
 BATTERY_ABSENT_V = 1.0   # at or below this the rail carries no pack
 BATTERY_ASSUMED_V = 8.4  # stand-in charge level when the real one is unknown
 
@@ -253,6 +260,15 @@ class ObstacleTracker:
             return fwd > self.SAFE_CM
         return True  # If no reading, assume clear
 
+    def forward_known(self, max_age_s):
+        """A fresh, real forward distance exists. forward_clear() treats a
+        missing reading as clear — fine for one dropped echo, fatal with a
+        dead sensor: the dog patrolled blind into everything (issue #68)."""
+        if time.time() - self._last_scan_ts > max_age_s:
+            return False
+        fwd = self._last_scan.get("0", self._last_scan.get("forward", -1))
+        return isinstance(fwd, (int, float)) and fwd > 0
+
     def forward_distance(self):
         """Get forward distance in cm, -1 if unknown."""
         fwd = self._last_scan.get("0", self._last_scan.get("forward", -1))
@@ -418,10 +434,16 @@ class BehaviorEngine:
         # External control
         self._forced_state = None  # Set by API to force a state
         self._patrol_enabled = True
+        self._user_hold_until = 0.0
+        self._last_touch_wag = 0.0
+        self._blind_ticks = 0
+        self._patrol_blocked_until = 0.0
 
     # ─── State Management ─────────────────────────────────────────────────
     def _request_transition(self, desired):
         """Request a state transition with guard logic."""
+        if desired == BehaviorState.PATROL and time.time() < self._patrol_blocked_until:
+            return
         if desired == self.state:
             self._candidate_state = None
             self._candidate_ticks = 0
@@ -450,7 +472,7 @@ class BehaviorEngine:
         if self._candidate_ticks >= self._transition_confirm_ticks:
             self._do_transition(desired)
 
-    def _do_transition(self, new_state):
+    def _do_transition(self, new_state, entry_actions=True):
         old = self.state
         self.state = new_state
         self._state_entered_at = time.time()
@@ -463,7 +485,9 @@ class BehaviorEngine:
         self.daemon({"cmd": "rgb", **rgb})
 
         # State entry actions
-        if new_state == BehaviorState.PATROL:
+        if not entry_actions:
+            pass
+        elif new_state == BehaviorState.PATROL:
             self._patrol_steps = 0
             self.daemon({"cmd": "move", "action": "stand", "speed": 60})
         elif new_state == BehaviorState.REST:
@@ -482,12 +506,34 @@ class BehaviorEngine:
         """Force a specific state (from API)."""
         try:
             desired = BehaviorState(state_name)
+            # An explicit request beats both a running hold and a blind stop.
+            self._user_hold_until = 0.0
+            self._patrol_blocked_until = 0.0
+            self._blind_ticks = 0
             self._forced_state = desired
             self._do_transition(desired)
             return {"ok": True, "state": desired.value}
         except ValueError:
             return {"ok": False, "error": f"Unknown state: {state_name}",
                     "valid": [s.value for s in BehaviorState]}
+
+    def user_command(self, what=""):
+        """A person just told the dog what to do. Autonomy steps aside for
+        USER_HOLD_S: no state ticks, no mood switches, no touch/face wags —
+        and a forced patrol is released, or the main loop would restore it
+        two seconds later (issue #68)."""
+        if USER_HOLD_S <= 0:
+            return
+        self._user_hold_until = time.time() + USER_HOLD_S
+        self._forced_state = None
+        if self.state in (BehaviorState.PATROL, BehaviorState.PLAY,
+                          BehaviorState.INVESTIGATE):
+            print(f"[behavior] User command ({what or 'action'}) — leaving "
+                  f"{self.state.value}, autonomy paused {USER_HOLD_S}s", flush=True)
+            self._do_transition(BehaviorState.IDLE, entry_actions=False)
+
+    def user_hold_active(self):
+        return time.time() < self._user_hold_until
 
     def _on_battery(self, batt_v):
         """Low (<6.8 V): warn and rest. Critical (<6.2 V): lie down and stay.
@@ -622,6 +668,10 @@ class BehaviorEngine:
         if self.state == BehaviorState.PATROL:
             # Touch during patrol → stop and acknowledge
             self._request_transition(BehaviorState.IDLE)
+        now = time.time()
+        if self.user_hold_active() or now - self._last_touch_wag < TOUCH_WAG_COOLDOWN_S:
+            return
+        self._last_touch_wag = now
         self.daemon({"cmd": "move", "action": "wag_tail", "steps": 3, "speed": 80})
 
     def _handle_sound(self, direction):
@@ -653,7 +703,9 @@ class BehaviorEngine:
                                     name = face.get("name", "unknown")
                                     known = name not in ("unknown", "", None)
                                     self.mood.on_person_detected(known=known, name=name)
-                                if any(f.get("name") not in ("unknown", "", None) for f in faces):
+                                if self.user_hold_active():
+                                    pass
+                                elif any(f.get("name") not in ("unknown", "", None) for f in faces):
                                     self.daemon({"cmd": "move", "action": "wag_tail", "steps": 2})
                                 else:
                                     self.daemon({"cmd": "rgb", "r": 255, "g": 150, "b": 0, "mode": "boom", "bps": 1.5})
@@ -682,6 +734,10 @@ class BehaviorEngine:
                 if self.low_battery_mode:
                     self._request_transition(BehaviorState.REST)
                     time.sleep(10)
+                    continue
+
+                if self.user_hold_active():
+                    time.sleep(2)
                     continue
 
                 # State-specific behavior
@@ -737,7 +793,7 @@ class BehaviorEngine:
             desc = (vision_data.get('description') or '').lower()
             if mentions_person(desc):
                 print('[behavior] Vision: person detected → INVESTIGATE', flush=True)
-                self._transition('investigate')
+                self._request_transition(BehaviorState.INVESTIGATE)
                 return
             if any(w in desc for w in ('blocked', 'obstacle', 'wall', 'furniture', 'chair')):
                 if 'clear' not in desc:
@@ -767,6 +823,21 @@ class BehaviorEngine:
                     print(f"[behavior] Obstacle ahead ({self.obstacles.forward_distance()}cm), avoiding", flush=True)
                     self._do_avoidance()
                     return
+
+        # No fresh distance reading → don't walk; a dead sensor stops patrol.
+        if not self.obstacles.forward_known(max_age_s=3 * self._patrol_scan_interval):
+            self._blind_ticks += 1
+            if self._blind_ticks >= BLIND_PATROL_TICKS:
+                print("[behavior] Patrol stopped: the ultrasonic sensor gives no "
+                      "distance readings, and the dog will not walk blind. Check "
+                      "`curl http://<robot>:8888/sensors` (distance → forward_cm) and "
+                      "`journalctl -u nox-body | grep -i ultrasonic`", flush=True)
+                self._blind_ticks = 0
+                self._forced_state = None
+                self._patrol_blocked_until = now + BLIND_PATROL_PAUSE_S
+                self._do_transition(BehaviorState.IDLE)
+            return
+        self._blind_ticks = 0
 
         # Forward is clear → walk
         if self._patrol_steps < self._patrol_max_steps:

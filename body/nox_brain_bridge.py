@@ -131,6 +131,20 @@ def push_to_brain(data, timeout=5):
 
 
 # ─── Daemon Communication ───
+def note_user_command(what):
+    """Tell the behavior engine a person just commanded a movement, so it
+    stops overriding it (issue #68). The legacy fallback engine has no such
+    hook — then this is a no-op."""
+    engine = _behavior_engine
+    hook = getattr(engine, "user_command", None)
+    if engine is None or not getattr(engine, "running", False) or hook is None:
+        return
+    try:
+        hook(what)
+    except Exception as e:
+        print(f"[bridge] behavior hold failed: {e}", flush=True)
+
+
 def send_to_daemon(cmd_json, timeout=30):
     """Send command to nox_daemon.py via TCP."""
     try:
@@ -716,6 +730,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
             if isinstance(actions, str):
                 actions = [actions]
+            note_user_command(f"/action {actions}")
             results = []
             for action in actions:
                 if isinstance(action, str):
@@ -915,6 +930,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     return
             
             results = []
+            if actions:
+                note_user_command(f"/combo {actions}")
             
             # Set RGB if specified
             if rgb:
@@ -1027,6 +1044,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 steps = max(1, min(20, round(angle / STEP_ANGLE_DEG)))
             else:
                 steps = body.get("steps", 3)
+            note_user_command(f"/move {direction}")
             cmd = {"cmd": "move", "action": direction, "steps": steps}
             if speed is not None:
                 cmd["speed"] = speed

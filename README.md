@@ -218,6 +218,7 @@ Every key is documented with examples in the file itself.
 | `NOX_API_TOKEN` / `NOX_RATE_LIMIT` | Bridge auth + rate limit (see Security) | off / 600 |
 | `NOX_NO_AUTO` | `1` disables autonomous behavior at boot | autonomous on |
 | `WALK_SPEED` | Gait speed (forward/backward/turns), 1–100 | `95` |
+| `BEHAVIOR_USER_HOLD_S` | Seconds autonomy pauses after your movement command (voice/MCP/API) | `60` |
 
 **Brain — `/etc/default/nox-brain`** (restart: `sudo systemctl restart nox-brain`; verify: `journalctl -u nox-brain | grep Language`)
 
