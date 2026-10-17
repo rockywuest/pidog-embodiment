@@ -24,7 +24,7 @@ def test_commands_mode_executes_commands(monkeypatch):
     sent = []
     monkeypatch.setattr(vb, "bridge_post", lambda p, d, timeout=15: sent.append((p, d)))
     vb.process_voice_commands({"text": "Assis !"})
-    assert sent == [("/combo", {"actions": ["sit"], "speak": "D'accord !"})]
+    assert sent == [("/combo", {"actions": ["sit"], "speak": "OK !"})]
 
 
 def test_commands_mode_ignores_chatter_instead_of_answering(monkeypatch):

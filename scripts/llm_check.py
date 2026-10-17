@@ -65,6 +65,18 @@ def probe_port(url, timeout=5.0):
         return e
 
 
+def same_port_on_loopback(url):
+    """The same endpoint on 127.0.0.1, or None when url already is local."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host, port = parsed.hostname, parsed.port
+    except ValueError:
+        return None
+    if not host or host in ("127.0.0.1", "localhost", "::1") or not port:
+        return None
+    return parsed._replace(netloc=f"127.0.0.1:{port}").geturl()
+
+
 def brain_service_state():
     try:
         out = subprocess.run(["systemctl", "is-active", "nox-brain"],
@@ -119,6 +131,16 @@ def main(argv):
               "firewall silently drops the port.")
         return 1
     if problem is not None:
+        local = same_port_on_loopback(vb.OPENAI_URL)
+        if local and isinstance(problem, ConnectionRefusedError) and probe_port(local) is None:
+            # Issue #45, log 10: the brain and Ollama ran on the SAME machine,
+            # but OPENAI_URL used its LAN address, where Ollama does not listen.
+            print(f"[llm-check] FAILED: {problem} — but Ollama DOES answer on this "
+                  f"machine at 127.0.0.1. If nox-brain runs here too, simply use "
+                  f"OPENAI_URL={local} in /etc/default/nox-brain (then: sudo "
+                  "systemctl restart nox-brain). OLLAMA_HOST only matters when "
+                  "the brain runs on a DIFFERENT machine.")
+            return 1
         print(f"[llm-check] FAILED: {problem}{vb.llm_error_hint(problem)}")
         return 1
 

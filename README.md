@@ -191,7 +191,9 @@ sudo systemctl start nox-brain
 > - **On the robot itself** (needs a Pi 5): `OPENAI_URL=http://127.0.0.1:11434/v1/chat/completions`.
 >   Field-tested — a Pi 5 runs `llama3.2` well enough for real conversations,
 >   with no network in the loop.
-> - **On a bigger machine**: point `OPENAI_URL` at that machine's IP. **Ollama
+> - **On the same machine as `nox-brain`** (e.g. a desktop running both):
+>   also `127.0.0.1` — no `OLLAMA_HOST` change needed.
+> - **On a bigger machine than the brain**: point `OPENAI_URL` at that machine's IP. **Ollama
 >   only listens on `127.0.0.1` by default** — on the big machine set
 >   `OLLAMA_HOST=0.0.0.0`, restart Ollama, and open port 11434 in its firewall.
 >   If the dog only ever says "I'm still thinking…" while `ollama run` works
