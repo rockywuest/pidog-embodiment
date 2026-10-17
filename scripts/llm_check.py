@@ -138,6 +138,11 @@ def main(argv):
         return 1
 
     took = time.time() - started
+    if not (raw or "").strip():
+        print(f"[llm-check] FAILED: the model answered after {took:.1f}s, but with "
+              f"NOTHING{vb.EMPTY_ANSWER_HINT} The dog would only say it is "
+              "still thinking.")
+        return 1
     parsed = vb.parse_response(raw or "")
     print(f"[llm-check] Answer in {took:.1f}s:")
     print(f"    raw:     {(raw or '')[:300]}")

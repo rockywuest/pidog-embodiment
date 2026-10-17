@@ -250,3 +250,22 @@ def test_mcp_check_shows_why_the_robot_is_unreachable(monkeypatch, capsys):
     assert mcp.check() == 1
     out = capsys.readouterr().out
     assert "FAILED" in out and "pidog.local" in out
+
+
+# ─── an empty answer is a failure with a reason (issue #45, log 9: qwen3-VL) ───
+
+def test_empty_llm_answer_is_logged_and_treated_as_failure(monkeypatch, capsys):
+    monkeypatch.setattr(vb, "LLM_CONFIGURED", True)
+    monkeypatch.setattr(vb, "request_llm", lambda *a, **k: "  ")
+    assert vb.call_llm([{"role": "user", "content": "assis"}]) is None
+    out = capsys.readouterr().out
+    assert "empty answer" in out and "reasoning models" in out
+
+
+def test_llm_check_reports_an_empty_answer_as_failure(check, capsys):
+    # Log 9: qwen3-VL took 55 s and returned "", and the tool claimed the dog
+    # "will speak this".
+    code = check({"OPENAI_URL": LOCAL, "LLM_MODEL": "qwen3-VL"},
+                 lambda *a, **k: FakeResponse(""))
+    out = capsys.readouterr().out
+    assert code == 1 and "NOTHING" in out and "will speak this" not in out

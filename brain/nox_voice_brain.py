@@ -387,6 +387,11 @@ def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
         return _post(retry)
 
 
+EMPTY_ANSWER_HINT = (" — reasoning models (qwen3, deepseek-r1, ...) can spend the "
+                     "whole token budget thinking and return nothing; use a "
+                     "non-reasoning model such as llama3.2 or qwen2.5.")
+
+
 def is_timeout(error):
     """urllib wraps timeouts in URLError(reason=socket.timeout)."""
     reason = getattr(error, "reason", error)
@@ -399,7 +404,12 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     if not LLM_CONFIGURED:
         return None
     try:
-        return request_llm(messages, system=system, max_tokens=max_tokens)
+        content = request_llm(messages, system=system, max_tokens=max_tokens)
+        if not (content or "").strip():
+            print(f"[brain] LLM returned an empty answer (model: {OPENAI_MODEL}){EMPTY_ANSWER_HINT}",
+                  flush=True)
+            return None
+        return content
     except Exception as e:
         if is_timeout(e):
             print(f"[brain] LLM timed out after {LLM_TIMEOUT}s (model: {OPENAI_MODEL}) — "
