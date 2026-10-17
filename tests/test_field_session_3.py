@@ -45,30 +45,28 @@ def test_default_and_blank_name_stay_nox(named):
 
 
 # ─── "connection refused" against a remote Ollama names OLLAMA_HOST ───
+# (the full hint matrix lives in test_field_session_4.py)
 
 def test_refused_remote_ollama_gets_the_hint():
-    hint = vb.llm_unreachable_hint(
+    hint = vb.llm_error_hint(
         "[Errno 111] Connection refused",
         "http://192.0.2.1:11434/v1/chat/completions")
     assert "OLLAMA_HOST=0.0.0.0" in hint and "11434" in hint
 
 
-def test_local_ollama_and_other_endpoints_get_no_hint():
+def test_only_remote_ollama_is_told_about_ollama_host():
     refused = "[Errno 111] Connection refused"
     # Local Ollama refusing = Ollama not running; OLLAMA_HOST is irrelevant.
-    assert vb.llm_unreachable_hint(
-        refused, "http://127.0.0.1:11434/v1/chat/completions") == ""
-    assert vb.llm_unreachable_hint(
-        refused, "http://localhost:11434/v1/chat/completions") == ""
-    # A refused cloud endpoint is not an Ollama problem.
-    assert vb.llm_unreachable_hint(
-        refused, "https://api.openai.com/v1/chat/completions") == ""
+    for url in ("http://127.0.0.1:11434/v1/chat/completions",
+                "http://localhost:11434/v1/chat/completions",
+                "https://api.openai.com/v1/chat/completions"):
+        assert "OLLAMA_HOST" not in vb.llm_error_hint(refused, url)
 
 
 def test_other_errors_get_no_hint():
     url = "http://192.0.2.1:11434/v1/chat/completions"
-    assert vb.llm_unreachable_hint("timed out", url) == ""
-    assert vb.llm_unreachable_hint("HTTP Error 500: boom", url) == ""
+    assert vb.llm_error_hint("timed out", url) == ""
+    assert vb.llm_error_hint("HTTP Error 500: boom", url) == ""
 
 
 # ─── gaits walk at WALK_SPEED, tunable from nox.env ───

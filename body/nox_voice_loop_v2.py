@@ -335,15 +335,25 @@ def is_own_speech(heard, speech_state):
     if speech_state.get("speaking"):
         return True
     heard_tokens = _echo_tokens(heard)
-    if len(heard_tokens) < ECHO_MIN_TOKENS:
-        return False  # never eat short real commands ("assis", "couché")
+    if not heard_tokens:
+        return False
+    short = len(heard_tokens) < ECHO_MIN_TOKENS
     for entry in speech_state.get("recent") or []:
         age = entry.get("age_s")
         if age is None or age > ECHO_TEXT_WINDOW:
             continue
-        spoken_set = set(_echo_tokens(entry.get("text")))
-        if not spoken_set:
+        spoken_tokens = _echo_tokens(entry.get("text"))
+        if not spoken_tokens:
             continue
+        if short:
+            # Short phrases only when they are the dog's WHOLE utterance:
+            # "D'accord !" heard back as 'd'accord' looped six times in a row
+            # (issue #45, log 8), but "assis" must never be eaten just because
+            # the dog once said "je suis assis".
+            if heard_tokens == spoken_tokens:
+                return True
+            continue
+        spoken_set = set(spoken_tokens)
         overlap = sum(t in spoken_set for t in heard_tokens) / len(heard_tokens)
         if overlap >= ECHO_OVERLAP:
             return True
