@@ -303,36 +303,58 @@ def bridge_post(path, data, timeout=15):
 
 
 # ─── Claude API ───
-def llm_unreachable_hint(reason, url=None):
-    """One sentence that saves an evening: "connection refused" against a
-    remote Ollama is almost always OLLAMA_HOST, because Ollama binds to
-    127.0.0.1 unless told otherwise. Verified in the field (issue #45, log 7:
-    the LLM "on brain" looked dead while `ollama run` worked fine there)."""
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+_NO_SUCH_HOST = ("name or service not known", "nodename nor servname",
+                 "temporary failure in name resolution", "getaddrinfo failed")
+
+
+def llm_error_hint(error, url=None, model=None):
+    """Turn a failed LLM call into the one sentence that fixes it. Field
+    reports kept showing only "the dog says it is still thinking" while the
+    real cause sat unread in the brain's journal (issue #45, logs 7 and 8).
+    Returns "" when there is nothing more specific to say."""
     url = OPENAI_URL if url is None else url
-    text = str(reason).lower()
-    if "refused" not in text and "no route to host" not in text:
-        return ""
+    model = OPENAI_MODEL if model is None else model
+    text = f"{error} {getattr(error, 'reason', '')}".lower()
     try:
         parsed = urllib.parse.urlparse(url)
         host, port = parsed.hostname or "", parsed.port
     except ValueError:
+        host, port = "", None
+    code = getattr(error, "code", None)
+    if code == 404:
+        return (f" — HTTP 404: usually the model name. LLM_MODEL={model} must be "
+                "installed on that server (Ollama: `ollama list`, then "
+                f"`ollama pull {model}`); also check the URL ends in "
+                "/v1/chat/completions.")
+    if code in (401, 403):
+        return " — the endpoint rejected the key: check OPENAI_API_KEY."
+    if any(s in text for s in _NO_SUCH_HOST):
+        return (f" — the name {host!r} does not resolve from this machine; "
+                "put the server's IP address into OPENAI_URL.")
+    if "refused" not in text and "no route to host" not in text:
         return ""
-    if port != 11434 or host in ("127.0.0.1", "localhost", "::1"):
-        return ""
-    return (f" — {host} looks like Ollama on another machine, and Ollama only "
-            "listens on 127.0.0.1 by default. On that machine set "
-            "OLLAMA_HOST=0.0.0.0 (then restart ollama) and allow port 11434 "
-            "through its firewall.")
+    if host in _LOOPBACK:
+        return (f" — nothing listens on {host}:{port} on THIS machine. Is "
+                "Ollama running here? `systemctl status ollama`")
+    if port == 11434:
+        return (f" — {host} looks like Ollama on another machine, and Ollama only "
+                "listens on 127.0.0.1 by default. On that machine: "
+                "`sudo systemctl edit ollama`, add [Service] "
+                "Environment=\"OLLAMA_HOST=0.0.0.0\", then "
+                "`sudo systemctl restart ollama` and allow port 11434 through its "
+                "firewall. (An `export OLLAMA_HOST=...` in a shell does not reach "
+                "the ollama service.)")
+    return f" — nothing answers at {host}:{port}: wrong address, or a firewall."
 
 
-def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
-    """Call OpenAI-compatible API for voice response."""
-    if not LLM_CONFIGURED:
-        return None
-    
+def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
+    """One chat-completions round trip; raises on any failure. call_llm() is
+    the forgiving wrapper the voice path uses — scripts/llm_check.py calls
+    this directly to show the exact error."""
     # OpenAI format: system message is part of messages
     api_messages = [{"role": "system", "content": system}] + messages
-    
+
     data = {
         "model": OPENAI_MODEL,
         "max_tokens": max_tokens,
@@ -340,7 +362,7 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
         "temperature": 0.7,
         "response_format": {"type": "json_object"},  # Force JSON output
     }
-    
+
     def _post(payload):
         req = urllib.request.Request(OPENAI_URL, data=json.dumps(payload).encode(), method="POST")
         req.add_header("Content-Type", "application/json")
@@ -351,28 +373,39 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
             return result.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     try:
-        try:
-            return _post(data)
-        except urllib.error.HTTPError as e:
-            # response_format is OpenAI's dialect; older Ollama / llama.cpp
-            # servers answer 400 to it — then the whole LLM path looked dead
-            # although the model was fine (2026-10-09 sweep). Ask once more
-            # without it; the system prompt still demands JSON.
-            if e.code != 400 or "response_format" not in data:
-                raise
-            retry = {k: v for k, v in data.items() if k != "response_format"}
-            print("[brain] LLM endpoint rejected response_format (HTTP 400) — "
-                  "retrying without it", flush=True)
-            return _post(retry)
+        return _post(data)
+    except urllib.error.HTTPError as e:
+        # response_format is OpenAI's dialect; older Ollama / llama.cpp
+        # servers answer 400 to it — then the whole LLM path looked dead
+        # although the model was fine (2026-10-09 sweep). Ask once more
+        # without it; the system prompt still demands JSON.
+        if e.code != 400:
+            raise
+        retry = {k: v for k, v in data.items() if k != "response_format"}
+        print("[brain] LLM endpoint rejected response_format (HTTP 400) — "
+              "retrying without it", flush=True)
+        return _post(retry)
+
+
+def is_timeout(error):
+    """urllib wraps timeouts in URLError(reason=socket.timeout)."""
+    reason = getattr(error, "reason", error)
+    return isinstance(reason, (TimeoutError, socket.timeout)) or isinstance(
+        error, (TimeoutError, socket.timeout))
+
+
+def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
+    """Call OpenAI-compatible API for voice response; None on any failure."""
+    if not LLM_CONFIGURED:
+        return None
+    try:
+        return request_llm(messages, system=system, max_tokens=max_tokens)
     except Exception as e:
-        # urllib wraps timeouts in URLError(reason=socket.timeout)
-        reason = getattr(e, "reason", e)
-        if isinstance(reason, (TimeoutError, socket.timeout)):
+        if is_timeout(e):
             print(f"[brain] LLM timed out after {LLM_TIMEOUT}s (model: {OPENAI_MODEL}) — "
                   f"local CPU inference can be slow; raise LLM_TIMEOUT if this repeats", flush=True)
         else:
-            print(f"[brain] LLM API error: {e}{llm_unreachable_hint(reason)}",
-                  flush=True)
+            print(f"[brain] LLM API error: {e}{llm_error_hint(e)}", flush=True)
         return None
 
 

@@ -15,6 +15,9 @@ Usage (Claude Code):
 
 Config: PIDOG_HOST (default pidog.local), PIDOG_BRIDGE_PORT (8888),
 NOX_API_TOKEN (when the bridge has auth on).
+
+Check the robot connection without any MCP client:
+    PIDOG_HOST=<robot> python3 brain/nox_mcp_server.py --check
 """
 import json
 import os
@@ -260,7 +263,26 @@ def handle(message):
     return _error(msg_id, -32601, f"method not found: {method}")
 
 
+def check():
+    """`--check`: does this server reach the robot? "/mcp shows connected"
+    only proves Claude started this process — the robot is first contacted
+    by a tool call (issue #53: 'connected, 10 tools' and still nothing)."""
+    if "PIDOG_HOST" not in os.environ:
+        print(f"[mcp] PIDOG_HOST is not set — trying the default {PIDOG_HOST}")
+    print(f"[mcp] Asking the robot at {BASE_URL} for its status ...", flush=True)
+    reply = bridge("/status", timeout=10)
+    if not isinstance(reply, dict) or reply.get("ok") is False or reply.get("error"):
+        error = reply.get("error") if isinstance(reply, dict) else reply
+        print(f"[mcp] FAILED: {error}")
+        return 1
+    print("[mcp] OK — the robot answers. Start `claude` in a terminal, check "
+          "/mcp lists this server, press Esc, and type what the dog should do.")
+    return 0
+
+
 def main():
+    if "--check" in sys.argv[1:]:
+        sys.exit(check())
     print(f"[mcp] pidog MCP server — robot at {BASE_URL}"
           f" (auth {'on' if API_TOKEN else 'off'})", file=sys.stderr, flush=True)
     for line in sys.stdin:

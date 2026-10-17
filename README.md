@@ -483,6 +483,19 @@ Every finished phrase is printed with its wake-word verdict, and phrases the
 service would silently drop (too quiet, filler words) say why. If the words on
 screen are wrong, it is the STT model or the microphone — not the brain.
 
+**The dog only ever says it is "still thinking"?** Then the brain reached the
+LLM and failed — and the reason is in the brain's journal, not the voice log.
+Ask the LLM one question exactly the way the brain does, on the machine where
+`nox-brain` runs:
+
+```bash
+sudo python3 scripts/llm_check.py   # reads /etc/default/nox-brain
+```
+
+It prints the answer and how long it took (or the error and how to fix it —
+Ollama not listening on the network, model not pulled, wrong host name), and
+warns when the model ignores the JSON format.
+
 ## 🔌 Claude as the Brain (MCP)
 
 `brain/nox_mcp_server.py` exposes the robot as **MCP tools** — photo (the model
@@ -496,8 +509,17 @@ claude mcp add pidog --env PIDOG_HOST=<robot-ip-or-name> --   python3 /path/to/p
 ```
 
 There is no command syntax to learn: once `/mcp` shows the server connected,
-just **type what you want in the Claude Code chat**, in any language — "fais
-asseoir le chien", "patrol for a minute" — and Claude picks the right tools.
+press **Esc** to close that menu and **type what you want at the `>` prompt of
+the same terminal**, in any language — "fais asseoir le chien", "patrol for a
+minute" — and Claude picks the right tools (the first time, it asks whether it
+may use them: answer yes). Start with *"use dog_status and tell me the
+battery level"* — if that works, everything works.
+
+- The **claude.ai website** does not see an MCP server that runs on your
+  machine — only the Claude Code terminal (or Claude Desktop, below) does.
+- "connected" in `/mcp` only means Claude started the server; the robot is
+  first contacted by a tool call. Test that part on its own:
+  `PIDOG_HOST=<robot> python3 brain/nox_mcp_server.py --check`
 
 Claude Desktop (`claude_desktop_config.json`) and other MCP clients:
 
