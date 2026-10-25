@@ -14,6 +14,7 @@ Runs on Nox's Pi 5 (brain side).
 
 import os
 import json
+import math
 import queue
 import re
 import threading
@@ -58,6 +59,26 @@ LLM_CONFIGURED = bool(OPENAI_API_KEY) or "api.openai.com" not in OPENAI_URL
 # cloud APIs a few seconds — default accordingly, override via LLM_TIMEOUT.
 LLM_TIMEOUT = int(os.environ.get(
     "LLM_TIMEOUT", "30" if "api.openai.com" in OPENAI_URL else "120"))
+# Sampling temperature; "off" sends none. Current Claude models (Opus 5.5 &
+# co., also via Anthropic's OpenAI-compatible endpoint) answer 400
+# "`temperature` is deprecated for this model" to any value.
+def _parse_temperature(raw):
+    raw = (raw or "").strip().lower()
+    if raw in ("", "off", "none"):
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        value = None
+    if value is None or not math.isfinite(value):
+        raise ValueError(f"LLM_TEMPERATURE must be a number like 0.7 or 'off', got {raw!r}")
+    return value
+
+
+LLM_TEMPERATURE = _parse_temperature(os.environ.get("LLM_TEMPERATURE", "0.7"))
+# Answer budget per voice turn. Models that always think (Claude Opus 5.5)
+# spend part of it before answering — raise it if answers come back empty.
+LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "0")) or None
 
 POLL_INTERVAL = 5.0  # Slow poll; push handles real-time
 SENSOR_CHECK_INTERVAL = 15.0
@@ -348,6 +369,11 @@ def llm_error_hint(error, url=None, model=None):
     return f" — nothing answers at {host}:{port}: wrong address, or a firewall."
 
 
+OPTIONAL_LLM_PARAMS = ("response_format", "temperature")
+LAST_FINISH_REASON = None  # of the latest answer — "length" means the budget ran out
+_REJECTED_PARAMS = set()  # learned from 400s, for the life of the process
+
+
 def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     """One chat-completions round trip; raises on any failure. call_llm() is
     the forgiving wrapper the voice path uses — scripts/llm_check.py calls
@@ -357,11 +383,14 @@ def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
 
     data = {
         "model": OPENAI_MODEL,
-        "max_tokens": max_tokens,
+        "max_tokens": LLM_MAX_TOKENS or max_tokens,
         "messages": api_messages,
-        "temperature": 0.7,
         "response_format": {"type": "json_object"},  # Force JSON output
     }
+    if LLM_TEMPERATURE is not None:
+        data["temperature"] = LLM_TEMPERATURE
+    for key in _REJECTED_PARAMS:
+        data.pop(key, None)
 
     def _post(payload):
         req = urllib.request.Request(OPENAI_URL, data=json.dumps(payload).encode(), method="POST")
@@ -370,26 +399,55 @@ def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
             req.add_header("Authorization", f"Bearer {OPENAI_API_KEY}")
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
             result = json.loads(resp.read().decode())
-            return result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            choice = (result.get("choices") or [{}])[0]
+            global LAST_FINISH_REASON
+            LAST_FINISH_REASON = choice.get("finish_reason")
+            return choice.get("message", {}).get("content", "")
 
+    for _ in range(len(OPTIONAL_LLM_PARAMS) + 1):
+        try:
+            return _post(data)
+        except urllib.error.HTTPError as e:
+            data = _without_refused_params(e, data)
+
+
+def _without_refused_params(e, data):
+    """The payload minus the optional parameter a 400 refused — or re-raise."""
+    # Optional parameters some endpoints refuse with HTTP 400:
+    # response_format (OpenAI's dialect — older Ollama / llama.cpp, the
+    # 2026-10-09 sweep) and temperature (current Claude models). Drop
+    # what the error names — response_format if it names nothing — ask
+    # again (request_llm loops until nothing is left to drop), and remember
+    # it so the next sentence pays no extra round trip. The system prompt
+    # still demands JSON.
+    if e.code != 400:
+        raise e
     try:
-        return _post(data)
-    except urllib.error.HTTPError as e:
-        # response_format is OpenAI's dialect; older Ollama / llama.cpp
-        # servers answer 400 to it — then the whole LLM path looked dead
-        # although the model was fine (2026-10-09 sweep). Ask once more
-        # without it; the system prompt still demands JSON.
-        if e.code != 400:
-            raise
-        retry = {k: v for k, v in data.items() if k != "response_format"}
-        print("[brain] LLM endpoint rejected response_format (HTTP 400) — "
-              "retrying without it", flush=True)
-        return _post(retry)
+        detail = e.read().decode("utf-8", "replace")
+    except Exception:
+        detail = ""
+    finally:
+        e.close()
+    named = [k for k in OPTIONAL_LLM_PARAMS if k in data and k in detail]
+    dropped = named or [k for k in ("response_format",) if k in data]
+    if not dropped:
+        # Nothing left to drop: say what the endpoint said, not just "Bad Request"
+        raise urllib.error.HTTPError(e.url, e.code, f"{e.msg}: {detail.strip()[:200]}",
+                                     e.headers, None) from None
+    _REJECTED_PARAMS.update(dropped)
+    print(f"[brain] LLM endpoint rejected {', '.join(dropped)} (HTTP 400) — "
+          "retrying without it, and leaving it out from now on", flush=True)
+    return {k: v for k, v in data.items() if k not in dropped}
 
 
 EMPTY_ANSWER_HINT = (" — reasoning models (qwen3, deepseek-r1, ...) can spend the "
                      "whole token budget thinking and return nothing; use a "
                      "non-reasoning model such as llama3.2 or qwen2.5.")
+
+
+LENGTH_HINT = (" — the model used its whole token budget before answering "
+               "(models that always think, e.g. Claude Opus 5.5, spend part of it on "
+               "reasoning): set LLM_MAX_TOKENS=2000 in the brain's config.")
 
 
 def is_timeout(error):
@@ -406,7 +464,8 @@ def call_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     try:
         content = request_llm(messages, system=system, max_tokens=max_tokens)
         if not (content or "").strip():
-            print(f"[brain] LLM returned an empty answer (model: {OPENAI_MODEL}){EMPTY_ANSWER_HINT}",
+            hint = LENGTH_HINT if LAST_FINISH_REASON == "length" else EMPTY_ANSWER_HINT
+            print(f"[brain] LLM returned an empty answer (model: {OPENAI_MODEL}){hint}",
                   flush=True)
             return None
         return content
