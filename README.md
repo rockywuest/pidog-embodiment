@@ -158,6 +158,8 @@ cd pidog-embodiment
 cd body
 # Raspberry Pi OS Bookworm enforces PEP 668 ("externally-managed-environment"):
 pip3 install --break-system-packages -r requirements.txt
+# (keeps numpy < 2 — Bookworm's picamera2 is built against numpy 1.x; with
+#  numpy 2 the camera fails with "numpy.dtype size changed")
 # Generates the systemd units for YOUR user and repo path, creates nox.env:
 sudo ../scripts/install-body.sh
 # Edit body/nox.env (set BRAIN_HOST — 127.0.0.1 if brain and body share one machine), then:
@@ -566,7 +568,7 @@ All 31 endpoints the bridge actually serves — see `body/nox_brain_bridge.py`.
 | POST | `/move` | Semantic movement: direction + `distance_cm` / `angle_deg` |
 | POST | `/combo` | Actions + speech + RGB + head in one call |
 | POST | `/expression` | Coordinated emotion: action + LEDs + head pose + sound |
-| POST | `/rgb` | LED strip color and animation |
+| POST | `/rgb` | LED strip color and animation — `{"color": "cyan"}` / `"#00ffff"` or `r`/`g`/`b`, plus `mode` and `bps`; unknown fields are a `400` |
 | POST | `/head` | Head pose (yaw/roll/pitch) |
 | POST | `/look_at` | Head by `direction` (left/right/up/down/center) or `angle`/`tilt` |
 | POST | `/face/register` | Register the face in front of the camera under a name |

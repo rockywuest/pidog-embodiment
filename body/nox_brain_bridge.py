@@ -37,8 +37,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nox_security import (BridgeSecurity, validate_head, validate_name,  # noqa: E402
-                          validate_rgb, validate_text)
+from nox_security import (RGB_MODES, BridgeSecurity, parse_rgb_request,  # noqa: E402
+                          validate_head, validate_name, validate_rgb, validate_text)
 
 # Token auth (optional, NOX_API_TOKEN) + rate limiting for requests from other
 # machines; localhost stays open for the robot's own services (issue #30).
@@ -690,7 +690,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "actions": VALID_ACTIONS,
                 "expressions": list(EXPRESSION_MAP.keys()),
                 "sounds": AVAILABLE_SOUNDS,
-                "rgb_modes": ["monochromatic", "breath", "boom", "bark", "speak", "listen"],
+                "rgb_modes": RGB_MODES,
                 "look_directions": list(LOOK_DIRECTIONS.keys()),
                 "vision": {"model": "SmolVLM-256M-Q8", "prompts": ["patrol", "describe", "obstacles", "people"]},
             })
@@ -771,8 +771,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         
         elif path == "/rgb":
             # Set RGB LEDs
-            rgb, err = validate_rgb(body.get("r", 128), body.get("g", 0),
-                                    body.get("b", 255), body.get("bps", 0.8))
+            rgb, err = parse_rgb_request(body)
             if err:
                 self._bad_request(err)
                 return
@@ -781,8 +780,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "r": rgb[0],
                 "g": rgb[1],
                 "b": rgb[2],
-                "mode": body.get("mode", "breath"),
-                "bps": rgb[3],
+                "mode": rgb[3],
+                "bps": rgb[4],
             })
             self._send_json(r)
         
