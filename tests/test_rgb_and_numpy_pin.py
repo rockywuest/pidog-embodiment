@@ -34,6 +34,8 @@ def test_colors_resolve(body, rgb):
 def test_mode_and_bps_pass_through():
     assert parse_rgb_request({"color": "red", "mode": "boom", "bps": 2})[0] == (255, 0, 0, "boom", 2.0)
     assert parse_rgb_request({"mode": "off"})[0][3] == "off"
+    assert parse_rgb_request({"color": "off"})[0][3] == "off"
+    assert parse_rgb_request({"color": "black", "mode": "boom"})[0][3] == "boom"
 
 
 @pytest.mark.parametrize("body, needle", [
@@ -44,6 +46,9 @@ def test_mode_and_bps_pass_through():
     ({"color": 5}, "string"),
     ({"mode": "rainbow"}, "unknown mode"),
     ({"r": 999}, "r"),
+    ({"color": None}, "string"),
+    ("cyan", "JSON object"),
+    ([1], "JSON object"),
 ])
 def test_bad_requests_say_why(body, needle):
     parsed, err = parse_rgb_request(body)
@@ -73,4 +78,22 @@ def test_daemon_and_bridge_agree_on_modes():
 def test_requirements_keep_numpy_below_2():
     req = (ROOT / "body" / "requirements.txt").read_text()
     assert re.search(r"^numpy[^\n]*<2\b", req, re.M)
-    assert re.search(r"^opencv-python-headless[^\n]*<4\.11\b", req, re.M)
+    assert re.search(r"^opencv-python-headless[^\n]*<4\.12\b", req, re.M)
+
+
+def test_combo_honours_a_named_color(server_port, monkeypatch):  # noqa: F811
+    # brain/nox_voice_brain.py forwards the LLM's own rgb object to /combo
+    sent = []
+    monkeypatch.setattr(bridge, "send_to_daemon", lambda p, timeout=30: sent.append(p) or {"ok": True})
+    status, _ = post(server_port, "/combo", {"rgb": {"color": "cyan"}})
+    rgb = [p for p in sent if p.get("cmd") == "rgb"]
+    assert status == 200 and (rgb[0]["r"], rgb[0]["g"], rgb[0]["b"]) == (0, 255, 255)
+    sent.clear()
+    status, body = post(server_port, "/combo", {"rgb": {"colour": "cyan"}, "actions": ["sit"]})
+    assert status == 400 and "colour" in body["error"] and sent == []
+
+
+def test_mcp_rgb_without_a_color_asks_for_one(monkeypatch):
+    import brain.nox_mcp_server as mcp
+    monkeypatch.setattr(mcp, "bridge", lambda *a, **k: pytest.fail("must not reach the robot"))
+    assert mcp.tool_rgb({})["isError"] is True

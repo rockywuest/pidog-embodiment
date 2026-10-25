@@ -151,6 +151,9 @@ def tool_expression(args):
 
 
 def tool_rgb(args):
+    if "color" not in args and not any(k in args for k in ("r", "g", "b")):
+        return result_of({"ok": False, "error": "say which color: color (a name like cyan, "
+                                                "or #rrggbb) or r/g/b"})
     return result_of(bridge("/rgb", {k: args[k] for k in ("r", "g", "b", "color", "mode", "bps")
                                      if k in args}))
 

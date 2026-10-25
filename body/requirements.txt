@@ -10,9 +10,9 @@
 #   pip3 install --break-system-packages -r requirements.txt
 # numpy stays below 2: Bookworm's python3-picamera2 and python3-simplejpeg are
 # compiled against numpy 1.x, and a pip-installed numpy 2 kills the camera with
-# "numpy.dtype size changed ... Expected 96 from C header, got 88". OpenCV 4.11+
-# pulls numpy 2 back in, so it is capped too.
-opencv-python-headless>=4.8.0,<4.11
+# "numpy.dtype size changed ... Expected 96 from C header, got 88". OpenCV
+# 4.12+ wheels require numpy>=2 and would pull it back in, so OpenCV is capped.
+opencv-python-headless>=4.8.0,<4.12
 numpy>=1.24.0,<2
 vosk>=0.3.45
 piper-tts>=1.0.0

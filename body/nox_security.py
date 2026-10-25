@@ -175,12 +175,15 @@ def parse_rgb_request(body):
     Unknown fields are refused instead of ignored, so a typo answers 400
     instead of leaving the LEDs purple and saying ok.
     """
+    if not isinstance(body, dict):
+        return None, "rgb must be a JSON object like {\"color\": \"cyan\"} or {\"r\": 0, \"g\": 255, \"b\": 255}"
     unknown = sorted(set(body) - set(RGB_FIELDS))
     if unknown:
         return None, (f"unknown field(s) {', '.join(unknown)} — use r/g/b (0-255) "
                       f"or color (a name or #rrggbb), plus mode and bps")
-    color = body.get("color")
-    if color is not None:
+    mode = body.get("mode", "breath")
+    if "color" in body:
+        color = body["color"]
         if any(k in body for k in ("r", "g", "b")):
             return None, "give either color or r/g/b, not both"
         if not isinstance(color, str):
@@ -191,12 +194,13 @@ def parse_rgb_request(body):
             r, g, b = (int(hex_value[i:i + 2], 16) for i in (0, 2, 4))
         elif color.strip().lower() in COLOR_NAMES:
             r, g, b = COLOR_NAMES[color.strip().lower()]
+            if color.strip().lower() == "off" and "mode" not in body:
+                mode = "off"
         else:
             return None, (f"unknown color {color!r} — use #rrggbb or one of: "
                           f"{', '.join(COLOR_NAMES)}")
     else:
         r, g, b = body.get("r", 128), body.get("g", 0), body.get("b", 255)
-    mode = body.get("mode", "breath")
     if mode not in RGB_MODES:
         return None, f"unknown mode {mode!r} — one of: {', '.join(RGB_MODES)}"
     rgb, err = validate_rgb(r, g, b, body.get("bps", 0.8))
