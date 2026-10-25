@@ -65,6 +65,12 @@ if [[ ! -f /etc/default/nox-brain ]]; then
 # Local (Ollama): no key needed, point at Ollama and pick your model:
 #OPENAI_URL=http://127.0.0.1:11434/v1/chat/completions
 #LLM_MODEL=llama3.2
+# Claude, via Anthropic's OpenAI-compatible endpoint (an API key from
+# console.anthropic.com — not a Claude subscription token, sk-ant-oat...):
+#OPENAI_URL=https://api.anthropic.com/v1/chat/completions
+#OPENAI_API_KEY=sk-ant-api03-...
+#LLM_MODEL=claude-opus-5-5
+#LLM_TEMPERATURE=off     # current Claude models refuse any temperature
 EOF
   chmod 600 /etc/default/nox-brain
   echo "Created /etc/default/nox-brain (template — edit it, then start the service)"

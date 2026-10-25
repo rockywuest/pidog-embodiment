@@ -9,7 +9,15 @@ import io
 import json
 import urllib.error
 
+import pytest
+
 import brain.nox_voice_brain as vb
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rejected_params(monkeypatch):
+    # request_llm remembers refused parameters for the process; tests must not inherit them
+    monkeypatch.setattr(vb, "_REJECTED_PARAMS", set())
 
 
 def http400(url):
@@ -86,3 +94,69 @@ def test_push_port_follows_brain_callback_port(monkeypatch):
     finally:
         monkeypatch.delenv("BRAIN_CALLBACK_PORT")
         importlib.reload(vb)
+
+
+def _ok_response():
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": '{"speak":"Ok!","actions":["sit"]}'}}]}).encode()
+    return R()
+
+
+def test_claude_temperature_400_is_dropped_and_remembered(monkeypatch):
+    # Opus 5.5 via Anthropic's OpenAI-compatible endpoint, verbatim error
+    calls = []
+    body = b'{"error": {"message": "`temperature` is deprecated for this model."}}'
+
+    def fake_urlopen(req, timeout=None):
+        payload = json.loads(req.data)
+        calls.append(payload)
+        if "temperature" in payload:
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, io.BytesIO(body))
+        return _ok_response()
+
+    monkeypatch.setattr(vb.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(vb, "LLM_CONFIGURED", True)
+    monkeypatch.setattr(vb, "LLM_TEMPERATURE", 0.7)
+    monkeypatch.setattr(vb, "_REJECTED_PARAMS", set())
+    assert vb.call_llm([{"role": "user", "content": "sit"}]) == '{"speak":"Ok!","actions":["sit"]}'
+    # response_format survives — only what the error named is dropped
+    assert len(calls) == 2 and "temperature" not in calls[1] and "response_format" in calls[1]
+    # the next sentence goes out without temperature right away
+    vb.call_llm([{"role": "user", "content": "stand"}])
+    assert len(calls) == 3 and "temperature" not in calls[2]
+
+
+def test_temperature_off_sends_none(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(json.loads(req.data))
+        return _ok_response()
+
+    monkeypatch.setattr(vb.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(vb, "LLM_CONFIGURED", True)
+    monkeypatch.setattr(vb, "LLM_TEMPERATURE", None)
+    monkeypatch.setattr(vb, "_REJECTED_PARAMS", set())
+    vb.call_llm([{"role": "user", "content": "sit"}])
+    assert "temperature" not in calls[0]
+
+
+def test_a_400_naming_nothing_droppable_is_not_retried_forever(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(json.loads(req.data))
+        raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, io.BytesIO(b"model not found"))
+
+    monkeypatch.setattr(vb.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(vb, "LLM_CONFIGURED", True)
+    monkeypatch.setattr(vb, "_REJECTED_PARAMS", set())
+    assert vb.call_llm([{"role": "user", "content": "sit"}]) is None
+    assert len(calls) == 2  # one retry without response_format, then give up

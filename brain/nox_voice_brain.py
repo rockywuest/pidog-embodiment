@@ -58,6 +58,11 @@ LLM_CONFIGURED = bool(OPENAI_API_KEY) or "api.openai.com" not in OPENAI_URL
 # cloud APIs a few seconds — default accordingly, override via LLM_TIMEOUT.
 LLM_TIMEOUT = int(os.environ.get(
     "LLM_TIMEOUT", "30" if "api.openai.com" in OPENAI_URL else "120"))
+# Sampling temperature; "off" sends none. Current Claude models (Opus 5.5 &
+# co., also via Anthropic's OpenAI-compatible endpoint) answer 400
+# "`temperature` is deprecated for this model" to any value.
+_temperature = os.environ.get("LLM_TEMPERATURE", "0.7").strip().lower()
+LLM_TEMPERATURE = None if _temperature in ("", "off", "none") else float(_temperature)
 
 POLL_INTERVAL = 5.0  # Slow poll; push handles real-time
 SENSOR_CHECK_INTERVAL = 15.0
@@ -348,6 +353,10 @@ def llm_error_hint(error, url=None, model=None):
     return f" — nothing answers at {host}:{port}: wrong address, or a firewall."
 
 
+OPTIONAL_LLM_PARAMS = ("response_format", "temperature")
+_REJECTED_PARAMS = set()  # learned from 400s, for the life of the process
+
+
 def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     """One chat-completions round trip; raises on any failure. call_llm() is
     the forgiving wrapper the voice path uses — scripts/llm_check.py calls
@@ -359,9 +368,12 @@ def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
         "model": OPENAI_MODEL,
         "max_tokens": max_tokens,
         "messages": api_messages,
-        "temperature": 0.7,
         "response_format": {"type": "json_object"},  # Force JSON output
     }
+    if LLM_TEMPERATURE is not None:
+        data["temperature"] = LLM_TEMPERATURE
+    for key in _REJECTED_PARAMS:
+        data.pop(key, None)
 
     def _post(payload):
         req = urllib.request.Request(OPENAI_URL, data=json.dumps(payload).encode(), method="POST")
@@ -375,15 +387,26 @@ def request_llm(messages, system=SYSTEM_PROMPT, max_tokens=256):
     try:
         return _post(data)
     except urllib.error.HTTPError as e:
-        # response_format is OpenAI's dialect; older Ollama / llama.cpp
-        # servers answer 400 to it — then the whole LLM path looked dead
-        # although the model was fine (2026-10-09 sweep). Ask once more
-        # without it; the system prompt still demands JSON.
+        # Optional parameters some endpoints refuse with HTTP 400:
+        # response_format (OpenAI's dialect — older Ollama / llama.cpp, the
+        # 2026-10-09 sweep) and temperature (current Claude models). Drop
+        # what the error names — response_format if it names nothing — ask
+        # once more, and remember it so the next sentence pays no extra
+        # round trip. The system prompt still demands JSON.
         if e.code != 400:
             raise
-        retry = {k: v for k, v in data.items() if k != "response_format"}
-        print("[brain] LLM endpoint rejected response_format (HTTP 400) — "
-              "retrying without it", flush=True)
+        try:
+            detail = e.read().decode("utf-8", "replace")
+        except Exception:
+            detail = ""
+        named = [k for k in OPTIONAL_LLM_PARAMS if k in data and k in detail]
+        dropped = named or [k for k in ("response_format",) if k in data]
+        if not dropped:
+            raise
+        _REJECTED_PARAMS.update(dropped)
+        retry = {k: v for k, v in data.items() if k not in dropped}
+        print(f"[brain] LLM endpoint rejected {', '.join(dropped)} (HTTP 400) — "
+              "retrying without it, and leaving it out from now on", flush=True)
         return _post(retry)
 
 
