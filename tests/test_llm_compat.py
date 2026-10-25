@@ -160,3 +160,65 @@ def test_a_400_naming_nothing_droppable_is_not_retried_forever(monkeypatch):
     monkeypatch.setattr(vb, "_REJECTED_PARAMS", set())
     assert vb.call_llm([{"role": "user", "content": "sit"}]) is None
     assert len(calls) == 2  # one retry without response_format, then give up
+
+
+def test_both_params_refused_in_turn_still_answers_the_first_sentence(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        payload = json.loads(req.data)
+        calls.append(payload)
+        for key in ("temperature", "response_format"):
+            if key in payload:
+                raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {},
+                                             io.BytesIO(f"`{key}` is not supported".encode()))
+        return _ok_response()
+
+    monkeypatch.setattr(vb.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(vb, "LLM_CONFIGURED", True)
+    monkeypatch.setattr(vb, "LLM_TEMPERATURE", 0.7)
+    assert vb.call_llm([{"role": "user", "content": "sit"}]) == '{"speak":"Ok!","actions":["sit"]}'
+    assert len(calls) == 3 and vb._REJECTED_PARAMS == {"temperature", "response_format"}
+
+
+def test_an_unknown_400_shows_what_the_endpoint_said(monkeypatch, capsys):
+    def fake_urlopen(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {},
+                                     io.BytesIO(b'{"error": "model claude-opus-9 not found"}'))
+
+    monkeypatch.setattr(vb.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(vb, "LLM_CONFIGURED", True)
+    assert vb.call_llm([{"role": "user", "content": "sit"}]) is None
+    assert "claude-opus-9 not found" in capsys.readouterr().out
+
+
+def test_an_answer_cut_by_the_budget_says_raise_llm_max_tokens(monkeypatch, capsys):
+    def fake_urlopen(req, timeout=None):
+        class R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps({"choices": [{"message": {"content": ""},
+                                                "finish_reason": "length"}]}).encode()
+        return R()
+
+    monkeypatch.setattr(vb.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(vb, "LLM_CONFIGURED", True)
+    assert vb.call_llm([{"role": "user", "content": "sit"}]) is None
+    out = capsys.readouterr().out
+    assert "LLM_MAX_TOKENS" in out and "llama3.2" not in out
+
+
+@pytest.mark.parametrize("raw, value", [("0.7", 0.7), ("off", None), ("", None), (" OFF ", None), ("0", 0.0)])
+def test_temperature_parsing(raw, value):
+    assert vb._parse_temperature(raw) == value
+
+
+@pytest.mark.parametrize("raw", ["abc", "0,7", "nan", "inf"])
+def test_a_bad_temperature_names_the_setting(raw):
+    with pytest.raises(ValueError, match="LLM_TEMPERATURE"):
+        vb._parse_temperature(raw)

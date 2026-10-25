@@ -71,6 +71,7 @@ if [[ ! -f /etc/default/nox-brain ]]; then
 #OPENAI_API_KEY=sk-ant-api03-...
 #LLM_MODEL=claude-opus-5-5
 #LLM_TEMPERATURE=off     # current Claude models refuse any temperature
+#LLM_MAX_TOKENS=2000     # Opus 5.5 always thinks first; 256 can come back empty
 EOF
   chmod 600 /etc/default/nox-brain
   echo "Created /etc/default/nox-brain (template — edit it, then start the service)"
