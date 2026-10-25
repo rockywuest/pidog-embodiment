@@ -151,7 +151,10 @@ def tool_expression(args):
 
 
 def tool_rgb(args):
-    return result_of(bridge("/rgb", {k: args[k] for k in ("r", "g", "b", "mode", "bps")
+    if "color" not in args and not any(k in args for k in ("r", "g", "b")):
+        return result_of({"ok": False, "error": "say which color: color (a name like cyan, "
+                                                "or #rrggbb) or r/g/b"})
+    return result_of(bridge("/rgb", {k: args[k] for k in ("r", "g", "b", "color", "mode", "bps")
                                      if k in args}))
 
 
@@ -189,15 +192,17 @@ TOOLS = [
     ("dog_expression", "Show an emotion: coordinated action + LED color + head pose (+ sound).",
      {"type": "object", "properties": {"emotion": {"type": "string", "enum": EMOTIONS}},
       "required": ["emotion"]}, tool_expression),
-    ("dog_rgb", "Set the LED strip color and animation.",
+    ("dog_rgb", "Set the LED strip color and animation: color as a name (cyan, red, ...) "
+                "or #rrggbb, or r/g/b.",
      {"type": "object",
-      "properties": {"r": {"type": "integer", "minimum": 0, "maximum": 255},
+      "properties": {"color": {"type": "string"},
+                     "r": {"type": "integer", "minimum": 0, "maximum": 255},
                      "g": {"type": "integer", "minimum": 0, "maximum": 255},
                      "b": {"type": "integer", "minimum": 0, "maximum": 255},
                      "mode": {"type": "string",
                               "enum": ["monochromatic", "breath", "boom", "bark", "speak", "listen", "off"]},
                      "bps": {"type": "number", "minimum": 0, "maximum": 10}},
-      "required": ["r", "g", "b"]}, tool_rgb),
+      "required": []}, tool_rgb),
     ("dog_behavior", "Autonomous mode: start (idle/patrol/play on its own), stop, or emergency_stop (freeze NOW).",
      {"type": "object", "properties": {"mode": {"type": "string",
                                                 "enum": ["start", "stop", "emergency_stop"]}},

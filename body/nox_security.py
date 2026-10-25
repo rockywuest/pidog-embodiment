@@ -155,6 +155,60 @@ def validate_rgb(r, g, b, bps=0.8):
     return (int(r), int(g), int(b), float(bps)), None
 
 
+RGB_MODES = ["monochromatic", "breath", "boom", "bark", "speak", "listen", "off"]
+RGB_FIELDS = ("r", "g", "b", "color", "mode", "bps")
+# Names a person (or an LLM) reaches for first — "color": "cyan" used to be
+# dropped silently and the strip stayed at its default purple.
+COLOR_NAMES = {
+    "red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255),
+    "cyan": (0, 255, 255), "magenta": (255, 0, 255), "yellow": (255, 255, 0),
+    "white": (255, 255, 255), "orange": (255, 128, 0), "purple": (128, 0, 255),
+    "pink": (255, 64, 160), "off": (0, 0, 0), "black": (0, 0, 0),
+}
+_HEX_COLOR = re.compile(r"^#?([0-9a-fA-F]{6})$")
+
+
+def parse_rgb_request(body):
+    """Turn a /rgb request body into (r, g, b, mode, bps) or an error.
+
+    Accepts r/g/b numbers or "color" as a name ("cyan") or hex ("#00ffff").
+    Unknown fields are refused instead of ignored, so a typo answers 400
+    instead of leaving the LEDs purple and saying ok.
+    """
+    if not isinstance(body, dict):
+        return None, "rgb must be a JSON object like {\"color\": \"cyan\"} or {\"r\": 0, \"g\": 255, \"b\": 255}"
+    unknown = sorted(set(body) - set(RGB_FIELDS))
+    if unknown:
+        return None, (f"unknown field(s) {', '.join(unknown)} — use r/g/b (0-255) "
+                      f"or color (a name or #rrggbb), plus mode and bps")
+    mode = body.get("mode", "breath")
+    if "color" in body:
+        color = body["color"]
+        if any(k in body for k in ("r", "g", "b")):
+            return None, "give either color or r/g/b, not both"
+        if not isinstance(color, str):
+            return None, f"color must be a string, got {type(color).__name__}"
+        match = _HEX_COLOR.match(color.strip())
+        if match:
+            hex_value = match.group(1)
+            r, g, b = (int(hex_value[i:i + 2], 16) for i in (0, 2, 4))
+        elif color.strip().lower() in COLOR_NAMES:
+            r, g, b = COLOR_NAMES[color.strip().lower()]
+            if color.strip().lower() == "off" and "mode" not in body:
+                mode = "off"
+        else:
+            return None, (f"unknown color {color!r} — use #rrggbb or one of: "
+                          f"{', '.join(COLOR_NAMES)}")
+    else:
+        r, g, b = body.get("r", 128), body.get("g", 0), body.get("b", 255)
+    if mode not in RGB_MODES:
+        return None, f"unknown mode {mode!r} — one of: {', '.join(RGB_MODES)}"
+    rgb, err = validate_rgb(r, g, b, body.get("bps", 0.8))
+    if err:
+        return None, err
+    return (rgb[0], rgb[1], rgb[2], mode, rgb[3]), None
+
+
 def validate_head(yaw=0, roll=0, pitch=0):
     for name, value in (("yaw", yaw), ("roll", roll), ("pitch", pitch)):
         _, err = _number(name, value, -HEAD_LIMIT, HEAD_LIMIT)

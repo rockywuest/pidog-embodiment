@@ -44,6 +44,7 @@ def test_every_mcp_tool_works_against_the_mock(via_mcp):
         ("dog_action", {"action": "sit"}), ("dog_speak", {"text": "Hallo Welt"}),
         ("dog_look_at", {"direction": "left"}), ("dog_expression", {"emotion": "happy"}),
         ("dog_rgb", {"r": 0, "g": 255, "b": 0}),
+        ("dog_rgb", {"color": "cyan"}),
         ("dog_behavior", {"mode": "start"}), ("dog_behavior", {"mode": "emergency_stop"}),
     ]:
         result = via_mcp(tool, args)
@@ -105,3 +106,10 @@ def test_action_shape_matches_the_real_bridge(mock_port):
 
     mixed = post({"actions": ["sit", "backflip"]})
     assert mixed["ok"] is False and mixed["results"][1]["ok"] is False
+
+
+def test_mock_rgb_follows_the_real_bridges_rules(via_mcp):
+    ok = via_mcp("dog_rgb", {"color": "cyan"})
+    assert not ok["isError"] and '"g": 255' in ok["content"][0]["text"]
+    bad = via_mcp("dog_rgb", {"color": "teal-ish"})
+    assert bad["isError"] and "unknown color" in bad["content"][0]["text"]

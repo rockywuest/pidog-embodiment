@@ -19,9 +19,15 @@ bridge, one pretend dog behind them. Zero dependencies.
 import argparse
 import json
 import random
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from socketserver import ThreadingMixIn
+
+# The real bridge's /rgb rules (stdlib only), so --mock answers like the dog.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "body"))
+from nox_security import parse_rgb_request  # noqa: E402
 
 # 1x1 grey JPEG — just enough for clients that want to "see" something.
 TINY_JPEG_B64 = (
@@ -168,9 +174,12 @@ class Handler(BaseHTTPRequestHandler):
             dog.log(f"🎭 *looks {emotion}*")
             self._json({"ok": True, "expression": emotion})
         elif path == "/rgb":
-            dog.rgb = {k: body.get(k) for k in ("r", "g", "b", "mode")}
-            dog.log(f"💡 LEDs → rgb({body.get('r')},{body.get('g')},{body.get('b')}) "
-                    f"{body.get('mode', 'breath')}")
+            checked, err = parse_rgb_request(body)
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            dog.rgb = dict(zip(("r", "g", "b", "mode", "bps"), checked))
+            dog.log(f"💡 LEDs → rgb({checked[0]},{checked[1]},{checked[2]}) {checked[3]}")
             self._json({"ok": True, **dog.rgb})
         elif path == "/voice/input":
             dog.log(f"👂 heard: \"{body.get('text', '')}\"")
