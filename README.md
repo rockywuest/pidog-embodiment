@@ -233,6 +233,7 @@ Every key is documented with examples in the file itself.
 | `OPENAI_URL` + `LLM_MODEL` | Any OpenAI-compatible endpoint — e.g. Ollama on a big PC: `http://<pc>:11434/v1/chat/completions` | OpenAI |
 | `OPENAI_API_KEY` | Only for cloud endpoints | — |
 | `NOX_MODE` | `chat` (LLM answers anything) or `commands` (keyword commands only — deterministic, free, TV-proof) | `chat` |
+| `NOX_FAST_COMMANDS` | In chat mode, a sentence that is only commands ("Nox, sitz!") skips the LLM and moves at once; `0` = LLM for everything | `1` |
 | `NOX_LANG` | Reply language: `auto` (the speaker's) or fixed `de`/`en`/`fr` | `auto` |
 | `ROBOT_NAME` | What the dog calls itself — set it to your wake word | `Nox` |
 | `BATTERY_LOW_V` | Battery warning threshold (volts) | `6.8` |
@@ -454,7 +455,9 @@ Text commands via `POST /voice/input` work either way.
 
 Say a wake word (`WAKE_WORD`, several allowed: `milou,tintin`), then your
 command. In `NOX_MODE=chat` (default) the LLM understands **free language** in
-any phrasing and can also just talk; in `NOX_MODE=commands` — and whenever the
+any phrasing and can also just talk — but a sentence made only of the keywords
+below ("Nox, setz dich bitte hin") skips the LLM and moves at once; in
+`NOX_MODE=commands` — and whenever the
 LLM is unreachable — exactly these keywords work (German / English / French),
 several per sentence:
 

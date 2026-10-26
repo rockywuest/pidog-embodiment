@@ -519,6 +519,20 @@ def process_voice_intelligent(msg):
     
     print(f"[brain] Voice: '{text}'", flush=True)
     reply_language(text)  # remembered for later unprompted messages
+
+    # "Sitz!" does not need a language model. Asking one first cost 2-4 s
+    # between the word and the paws, and a dog that reacts that late feels
+    # deaf. A sentence that is nothing but commands goes straight to the body;
+    # anything with more in it ("sit and tell me what you see") still goes to
+    # the LLM below.
+    fast = plain_command(text) if FAST_COMMANDS else None
+    if fast:
+        print(f"[brain] Fast path: {fast} (no LLM)", flush=True)
+        bridge_post("/combo", {"actions": fast})
+        # In the reply format the LLM uses, so later turns know what happened
+        # (and no endpoint sees an empty assistant message).
+        conversation.add_exchange(text, json.dumps({"speak": "", "actions": fast}))
+        return
     
     # Build context from current perception
     context_parts = []
@@ -701,6 +715,33 @@ def parse_simple_command(text):
     if intent == "who" and not actions:
         actions = ["wag_tail"]
     return {"actions": actions, "intent": intent, "lang": lang}
+
+
+# Words that may surround a command without making it a conversation:
+# "Nox, setz dich bitte mal hin" is still just sit.
+_FILLER = (r"nox|bitte|mal|jetzt|doch|dich|hin|her|und|dann|sofort|schnell|nochmal|"
+           r"noch|einmal|ok|okay|hey|hallo|dreh\w*|mit|dem|den|deinem|deinen|nach|"
+           r"please|now|and|then|again|the|your|to|"
+           r"et|puis|toi|vite|maintenant|la|le|ta|à|s'il te pla[iî]t|s'il vous pla[iî]t")
+FAST_COMMANDS = (os.environ.get("NOX_FAST_COMMANDS") or "1").strip() not in ("0", "off", "no", "false")
+
+
+def plain_command(text):
+    """The actions when `text` is only commands (and filler), else None."""
+    cmd = parse_simple_command(text)
+    if cmd["intent"] != "command":
+        return None
+    rest = " ".join((text or "").lower().replace("’", "'").split())
+    # "Right, sit" is a "yes" before a command, not a turn: a bare English
+    # right/left is left to the LLM.
+    if re.search(r"(?<![\w-])(?<!turn )(?<!go )(?:right|left)(?!\w)", rest):
+        return None
+    for _, patterns in _INTENTS:
+        for pattern in patterns.values():
+            rest = re.sub(r"(?<![\w-])(?:" + pattern + r")(?!\w)", " ", rest)
+    rest = rest.replace("-", " ")  # "assis-toi"
+    rest = re.sub(r"(?<![\w-])(?:" + _FILLER + r")(?!\w)", " ", rest)
+    return cmd["actions"] if not re.findall(r"\w+", rest) else None
 
 
 _last_lang = None

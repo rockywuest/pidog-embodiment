@@ -49,6 +49,9 @@ if [[ ! -f /etc/default/nox-brain ]]; then
 # ONLY keyword commands run (sit/assis/sitz, ...), everything else is ignored:
 # deterministic, free, and immune to a TV talking in the room.
 #NOX_MODE=commands
+# In chat mode a sentence that is ONLY commands ("Nox, sitz!") skips the LLM
+# and moves at once; 0 = ask the LLM for everything:
+#NOX_FAST_COMMANDS=0
 # Pairs well with commands mode, in body/nox.env on the ROBOT:
 # CONVERSATION_TIMEOUT=0  → every command needs the wake word (no 45 s window)
 
