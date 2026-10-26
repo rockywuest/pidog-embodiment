@@ -415,10 +415,18 @@ def command_grammar(lang):
     return COMMAND_WORDS[lang] + WAKE_WORDS + ["[unk]"]
 
 
-def confident_grammar_text(result, min_conf=GRAMMAR_MIN_CONF):
-    """The grammar transcript when every word is confident, else None."""
+GRAMMAR_MAX_CHUNKS = 240  # 30 s of audio: a phrase Vosk never ends is no command
+
+
+def confident_grammar_text(result, full_text, min_conf=GRAMMAR_MIN_CONF):
+    """The grammar transcript when every word is confident AND it covers the
+    whole phrase, else None. Words outside the grammar are not emitted at all,
+    so "nox wie spät ist es" could shrink to a confident "nox" — a grammar
+    reading with fewer words than the full transcript dropped something."""
     words = [w for w in result.get("result", []) if w.get("word") != "[unk]"]
     if not words or len(words) != len(result.get("result", [])):
+        return None
+    if len(words) != len(full_text.split()):
         return None
     if any(w.get("conf", 0) < min_conf for w in words):
         return None
@@ -513,20 +521,19 @@ def main():
             energy.feed(compute_rms(data))
             if grammar_rec is not None:
                 utterance.append(data)
+                del utterance[:-GRAMMAR_MAX_CHUNKS]
 
             if rec.AcceptWaveform(data):
                 speech_chunks = energy.harvest()
                 result = json.loads(rec.Result())
                 text = result.get("text", "").strip()
+                better = None
                 if grammar_rec is not None:
                     audio, utterance = b"".join(utterance), []
                     if text:
                         grammar_rec.AcceptWaveform(audio)
-                        better = confident_grammar_text(json.loads(grammar_rec.FinalResult()))
+                        better = confident_grammar_text(json.loads(grammar_rec.FinalResult()), text)
                         grammar_rec.Reset()
-                        if better and better != text:
-                            print(f"[voice-v2] Grammar: '{better}' (full model heard '{text}')", flush=True)
-                            text = better
 
                 if len(text) < MIN_PHRASE_LENGTH:
                     continue
@@ -552,9 +559,15 @@ def main():
                 # replies and battery warnings arrive AFTER the time window.
                 speech_state = send_to_daemon({"cmd": "speech_state", "_internal": True},
                                               timeout=3)
-                if is_own_speech(text, speech_state):
+                if is_own_speech(text, speech_state) or (better and is_own_speech(better, speech_state)):
                     print(f"[voice-v2] Self-echo suppressed: '{text}'", flush=True)
                     continue
+
+                # Only now, past every filter, may the grammar reading replace
+                # the transcript — it must not turn an echo into a command.
+                if better and better != text:
+                    print(f"[voice-v2] Grammar: '{better}' (full model heard '{text}')", flush=True)
+                    text = better
 
                 print(f"[voice-v2] Heard: '{text}'", flush=True)
 

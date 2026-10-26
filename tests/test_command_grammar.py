@@ -8,20 +8,36 @@ def _res(*pairs):
 
 
 def test_a_confident_command_is_taken():
-    assert v2.confident_grammar_text(_res(("nox", 1.0), ("leg", 1.0), ("dich", 1.0), ("hin", 1.0))) \
-        == "nox leg dich hin"
+    assert v2.confident_grammar_text(_res(("komm", 1.0), ("her", 1.0), ("und", 1.0), ("wedel", 1.0),
+                                          ("mit", 1.0), ("dem", 1.0), ("schwanz", 1.0)),
+                                     "komm her und weder mit dem schwanz") \
+        == "komm her und wedel mit dem schwanz"
 
 
 def test_a_question_forced_into_commands_is_refused():
     # "Nox, was siehst du gerade vor dir?" -> grammar: nox sitz dreh hallo geh
     assert v2.confident_grammar_text(_res(("nox", 1.0), ("sitz", 0.83), ("dreh", 0.72),
-                                          ("hallo", 1.0), ("geh", 0.47))) is None
+                                          ("hallo", 1.0), ("geh", 0.47)),
+                                     "nox was siehst du gerade") is None
+
+
+def test_a_reading_that_dropped_words_is_refused():
+    # out-of-grammar words are not emitted: "nox wie spät ist es" -> "nox"
+    assert v2.confident_grammar_text(_res(("nox", 1.0)), "nox wie spät ist es") is None
+    assert v2.confident_grammar_text(_res(("nox", 1.0), ("komm", 1.0), ("her", 1.0)),
+                                     "nox komm her und schau") is None
 
 
 def test_unknown_words_or_nothing_mean_no_grammar_result():
-    assert v2.confident_grammar_text(_res(("[unk]", 1.0), ("sitz", 1.0))) is None
-    assert v2.confident_grammar_text({"result": []}) is None
-    assert v2.confident_grammar_text({}) is None
+    assert v2.confident_grammar_text(_res(("[unk]", 1.0), ("sitz", 1.0)), "was sitz") is None
+    assert v2.confident_grammar_text({"result": []}, "x") is None
+    assert v2.confident_grammar_text({}, "x") is None
+
+
+def test_the_grammar_replaces_text_only_after_the_echo_filters():
+    src = open("body/nox_voice_loop_v2.py").read()
+    assert src.index("is_own_speech(better, speech_state)") < src.index("text = better")
+    assert "del utterance[:-GRAMMAR_MAX_CHUNKS]" in src
 
 
 def test_language_comes_from_the_model_name():
