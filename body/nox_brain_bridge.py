@@ -145,6 +145,18 @@ def note_user_command(what):
         print(f"[bridge] behavior hold failed: {e}", flush=True)
 
 
+def note_contact(why):
+    """Someone talked to the dog: the behavior engine may be lively for a
+    while (it rests otherwise). Older engines lack the hook — no-op."""
+    hook = getattr(_behavior_engine, "engage", None)
+    if hook is None or not getattr(_behavior_engine, "running", False):
+        return
+    try:
+        hook(why)
+    except Exception as e:
+        print(f"[bridge] behavior wake failed: {e}", flush=True)
+
+
 def send_to_daemon(cmd_json, timeout=30):
     """Send command to nox_daemon.py via TCP."""
     try:
@@ -867,6 +879,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # Voice loop reports new speech input
             text = body.get("text", "")
             if text:
+                note_contact("voice")
                 msg = {
                     "text": text,
                     "ts": time.time(),

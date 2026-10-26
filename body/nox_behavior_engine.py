@@ -25,6 +25,7 @@ Communicates with nox_daemon.py via TCP socket (localhost:9999).
 Sprint 3 of Nox Embodiment Upgrade.
 """
 
+import os
 import re
 import time
 import random
@@ -71,6 +72,52 @@ BLIND_PATROL_PAUSE_S = 300   # then no mood-driven patrol for this long
 # next restart. Now only an explicit /behavior/start {"state": "patrol"}
 # walks; NOX_AUTO_PATROL=1 brings back the bored/curious patrol.
 AUTO_PATROL = env_int("NOX_AUTO_PATROL", 0) > 0
+# A pet nobody is playing with lies still. In the field the dog never settled:
+# idle head turns, sniffs and stretches every few seconds, every noise an
+# investigation. The servos never got their rest, ran warm, and the family
+# found it unnerving. Now the engine is lively only for BEHAVIOR_AWAKE_S after
+# contact (a voice command, a touch, an API call); otherwise it sends nothing
+# that moves, lights or speaks, and the daemon's own sleep takes over.
+AWAKE_S = max(0, env_int("BEHAVIOR_AWAKE_S", 120))
+# Hours with no autonomous motion at all, "22-7" style; "off" disables.
+# Direct commands (voice, MCP, curl) still work: they bypass the engine.
+QUIET_HOURS_RAW = os.environ.get("BEHAVIOR_QUIET_HOURS", "22-7")
+# Sounds habituate (HoundMind pattern): a TV or a running washing machine is
+# not news. More than SOUND_HABITUATION_COUNT sounds within the window and
+# the dog ignores sounds for SOUND_HABITUATION_S.
+SOUND_REACT_COOLDOWN_S = 20.0
+SOUND_HABITUATION_COUNT = 3
+SOUND_HABITUATION_WINDOW_S = 60.0
+SOUND_HABITUATION_S = 300.0
+# What the engine may not send while the dog rests. Battery alarms pass
+# with "_urgent".
+MOTION_CMDS = {"move", "head", "head_ema", "three_way_scan", "scan_sweep", "rgb", "speak"}
+
+
+def parse_quiet_hours(raw):
+    """(start, end) hours from "22-7", or None for "off" / junk."""
+    raw = (raw or "").strip().lower()
+    if raw in ("", "off", "none", "0", "no"):
+        return None
+    m = re.match(r"^(\d{1,2})(?::00)?\s*-\s*(\d{1,2})(?::00)?$", raw)
+    if not m or not all(0 <= int(h) <= 24 for h in m.groups()):
+        print(f"[behavior] BEHAVIOR_QUIET_HOURS={raw!r} not understood (e.g. 22-7) — none", flush=True)
+        return None
+    start, end = (int(h) % 24 for h in m.groups())
+    return None if start == end else (start, end)
+
+
+QUIET_HOURS = parse_quiet_hours(QUIET_HOURS_RAW)
+
+
+def in_quiet_hours(hour=None, quiet=None):
+    quiet = QUIET_HOURS if quiet is None else quiet
+    if not quiet:
+        return False
+    if hour is None:
+        hour = time.localtime().tm_hour
+    start, end = quiet
+    return start <= hour < end if start < end else (hour >= start or hour < end)
 BATTERY_ABSENT_V = 1.0   # at or below this the rail carries no pack
 BATTERY_ASSUMED_V = 8.4  # stand-in charge level when the real one is unknown
 
@@ -402,6 +449,9 @@ class BehaviorEngine:
         # Wrap daemon calls to mark as internal (won't reset idle timer)
         def _internal_send(cmd):
             cmd["_internal"] = True
+            urgent = cmd.pop("_urgent", False)
+            if cmd.get("cmd") in MOTION_CMDS and not urgent and not self.may_move():
+                return {"ok": False, "skipped": "resting"}
             return daemon_send_fn(cmd)
         self.daemon = _internal_send
         self._raw_daemon = daemon_send_fn  # Keep unwrapped for bridge use
@@ -443,6 +493,10 @@ class BehaviorEngine:
         self._last_touch_wag = 0.0
         self._blind_ticks = 0
         self._patrol_blocked_until = 0.0
+        self._awake_until = 0.0  # asleep at boot: nothing moves until contact
+        self._sound_times = deque(maxlen=SOUND_HABITUATION_COUNT + 1)
+        self._sounds_ignored_until = 0.0
+        self._last_sound_react = 0.0
 
     # ─── State Management ─────────────────────────────────────────────────
     def _request_transition(self, desired):
@@ -508,10 +562,26 @@ class BehaviorEngine:
                 f"State: {old.value} → {new_state.value}",
                 mood_state=self.mood.as_dict())
 
+    def engage(self, why=""):
+        """Someone is here: be lively for AWAKE_S."""
+        was_awake = self.awake()
+        self._awake_until = time.time() + AWAKE_S
+        if not was_awake and self.awake():
+            print(f"[behavior] Awake ({why or 'contact'}) for {AWAKE_S}s", flush=True)
+
+    def awake(self):
+        return time.time() < self._awake_until and not in_quiet_hours()
+
+    def may_move(self):
+        """An explicitly requested patrol walks on; everything else needs a
+        recent contact outside the quiet hours."""
+        return self.state == BehaviorState.PATROL or self.awake()
+
     def force_state(self, state_name):
         """Force a specific state (from API)."""
         try:
             desired = BehaviorState(state_name)
+            self.engage(f"/behavior/start {desired.value}")
             # An explicit request beats both a running hold and a blind stop.
             self._user_hold_until = 0.0
             self._patrol_blocked_until = 0.0
@@ -528,6 +598,7 @@ class BehaviorEngine:
         USER_HOLD_S: no state ticks, no mood switches, no touch/face wags —
         and a forced patrol is released, or the main loop would restore it
         two seconds later (issue #68)."""
+        self.engage(what or "command")
         if USER_HOLD_S <= 0:
             return
         self._user_hold_until = time.time() + USER_HOLD_S
@@ -562,14 +633,14 @@ class BehaviorEngine:
         if batt_v < BATTERY_CRITICAL_V and not self.critical_battery_mode:
             self.critical_battery_mode = True
             self.low_battery_mode = True
-            self.daemon({"cmd": "speak", "text": spoken("battery_critical")})
-            self.daemon({"cmd": "move", "action": "lie", "_internal": True})
-            self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "breath", "bps": 0.3})
+            self.daemon({"cmd": "speak", "text": spoken("battery_critical"), "_urgent": True})
+            self.daemon({"cmd": "move", "action": "lie", "_urgent": True})
+            self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "breath", "bps": 0.3, "_urgent": True})
             self._request_transition(BehaviorState.REST)
         elif batt_v < BATTERY_LOW_V and not self.low_battery_mode:
             self.low_battery_mode = True
-            self.daemon({"cmd": "speak", "text": spoken("battery_low")})
-            self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2})
+            self.daemon({"cmd": "speak", "text": spoken("battery_low"), "_urgent": True})
+            self.daemon({"cmd": "rgb", "r": 255, "g": 0, "b": 0, "mode": "boom", "bps": 2, "_urgent": True})
             self._request_transition(BehaviorState.REST)
         if batt_v > BATTERY_CRITICAL_V + 0.4:
             self.critical_battery_mode = False
@@ -671,6 +742,7 @@ class BehaviorEngine:
     def _handle_touch(self, side):
         """React to touch based on current state."""
         print(f"[behavior] Touch: {side}", flush=True)
+        self.engage("touch")
         if self.state == BehaviorState.PATROL:
             # Touch during patrol → stop and acknowledge
             self._request_transition(BehaviorState.IDLE)
@@ -681,7 +753,20 @@ class BehaviorEngine:
         self.daemon({"cmd": "move", "action": "wag_tail", "steps": 3, "speed": 80})
 
     def _handle_sound(self, direction):
-        """React to sound: turn head toward it."""
+        """React to sound: turn head toward it — when awake, now and then,
+        and not to the same noise over and over."""
+        now = time.time()
+        self._sound_times.append(now)
+        if (len(self._sound_times) > SOUND_HABITUATION_COUNT
+                and now - self._sound_times[0] < SOUND_HABITUATION_WINDOW_S):
+            if now >= self._sounds_ignored_until:
+                print(f"[behavior] Many sounds — ignoring them for {int(SOUND_HABITUATION_S)}s", flush=True)
+            self._sounds_ignored_until = now + SOUND_HABITUATION_S
+            self._sound_times.clear()
+        if (not self.awake() or now < self._sounds_ignored_until
+                or now - self._last_sound_react < SOUND_REACT_COOLDOWN_S):
+            return
+        self._last_sound_react = now
         if 0 <= direction <= 180:
             yaw = min(40, direction * 0.25)
         else:
@@ -698,7 +783,7 @@ class BehaviorEngine:
         while self.running:
             try:
                 now = datetime.datetime.now()
-                if 7 <= now.hour < 22 and not self.low_battery_mode:
+                if self.awake() and not self.low_battery_mode:
                     try:
                         req = urllib.request.Request("http://localhost:8888/look", method="GET")
                         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -753,6 +838,14 @@ class BehaviorEngine:
                     continue
 
                 if self.user_hold_active():
+                    time.sleep(2)
+                    continue
+
+                # Nobody around (or quiet hours): lie still, send nothing.
+                if not self.may_move():
+                    self._forced_state = None
+                    if self.state != BehaviorState.REST:
+                        self._do_transition(BehaviorState.REST, entry_actions=False)
                     time.sleep(2)
                     continue
 
