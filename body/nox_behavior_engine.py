@@ -66,6 +66,11 @@ USER_HOLD_S = max(0, env_int("BEHAVIOR_USER_HOLD_S", 60))
 TOUCH_WAG_COOLDOWN_S = 10.0  # a noisy touch pad must not wag non-stop
 BLIND_PATROL_TICKS = 2       # ticks without a distance reading → stop patrol
 BLIND_PATROL_PAUSE_S = 300   # then no mood-driven patrol for this long
+# Walking around unattended is opt-in. It used to be on: a bored dog set off
+# by itself, cables still plugged in, and /behavior/stop held only until the
+# next restart. Now only an explicit /behavior/start {"state": "patrol"}
+# walks; NOX_AUTO_PATROL=1 brings back the bored/curious patrol.
+AUTO_PATROL = env_int("NOX_AUTO_PATROL", 0) > 0
 BATTERY_ABSENT_V = 1.0   # at or below this the rail carries no pack
 BATTERY_ASSUMED_V = 8.4  # stand-in charge level when the real one is unknown
 
@@ -433,7 +438,7 @@ class BehaviorEngine:
 
         # External control
         self._forced_state = None  # Set by API to force a state
-        self._patrol_enabled = True
+        self._patrol_enabled = AUTO_PATROL  # mood may start a patrol
         self._user_hold_until = 0.0
         self._last_touch_wag = 0.0
         self._blind_ticks = 0
@@ -442,7 +447,8 @@ class BehaviorEngine:
     # ─── State Management ─────────────────────────────────────────────────
     def _request_transition(self, desired):
         """Request a state transition with guard logic."""
-        if desired == BehaviorState.PATROL and time.time() < self._patrol_blocked_until:
+        if desired == BehaviorState.PATROL and (
+                not self._patrol_enabled or time.time() < self._patrol_blocked_until):
             return
         if desired == self.state:
             self._candidate_state = None
