@@ -780,12 +780,10 @@ class BehaviorEngine:
         if self.state == BehaviorState.IDLE:
             self._request_transition(BehaviorState.INVESTIGATE)
 
-    # ─── Face Check Loop (2 min interval, daytime only) ───────────────────
+    # ─── Face Check Loop (2 min interval, only while awake) ───────────────
     def _face_check_loop(self):
-        import datetime
         while self.running:
             try:
-                now = datetime.datetime.now()
                 if self.awake() and not self.low_battery_mode:
                     try:
                         req = urllib.request.Request("http://localhost:8888/look", method="GET")
