@@ -336,6 +336,7 @@ def test_repeated_sounds_habituate(daytime, monkeypatch):
 @pytest.mark.parametrize("raw, hour, quiet", [
     ("22-7", 23, True), ("22-7", 3, True), ("22-7", 7, False), ("22-7", 12, False),
     ("13-15", 14, True), ("13-15", 15, False), ("off", 23, False), ("junk", 23, False),
+    ("0-24", 12, True), ("7-7", 7, False),
 ])
 def test_quiet_hours_parse(raw, hour, quiet):
     assert be.in_quiet_hours(hour, be.parse_quiet_hours(raw) or ()) is quiet

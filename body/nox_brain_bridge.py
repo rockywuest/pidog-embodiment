@@ -1174,14 +1174,10 @@ def main():
             _behavior_engine.start()
             print("[bridge] Behavior Engine started (FSM + Patrol + Obstacle Avoidance)", flush=True)
         except Exception as e:
-            print(f"[bridge] BehaviorEngine failed, trying v2 fallback: {e}", flush=True)
-            try:
-                from nox_autonomous_v2 import AutonomousBehavior
-                auto = AutonomousBehavior(daemon_send_fn=send_to_daemon)
-                auto.start()
-                print("[bridge] Autonomous behavior v2 active (fallback)", flush=True)
-            except Exception as e2:
-                print(f"[bridge] Autonomous behavior skipped: {e2}", flush=True)
+            # No fallback to the old nox_autonomous_v2: it knows no awake
+            # window and no quiet hours, so a failed import would bring back
+            # the dog that never rests. A still dog is the safe failure.
+            print(f"[bridge] BehaviorEngine failed — no autonomous behavior: {e}", flush=True)
     else:
         print("[bridge] Behavior engine disabled (NOX_NO_AUTO=1)", flush=True)
     

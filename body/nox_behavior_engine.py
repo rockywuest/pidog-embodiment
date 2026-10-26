@@ -103,7 +103,8 @@ def parse_quiet_hours(raw):
     if not m or not all(0 <= int(h) <= 24 for h in m.groups()):
         print(f"[behavior] BEHAVIOR_QUIET_HOURS={raw!r} not understood (e.g. 22-7) — none", flush=True)
         return None
-    start, end = (int(h) % 24 for h in m.groups())
+    start, end = int(m.group(1)) % 24, int(m.group(2))
+    end = 24 if end == 24 and start == 0 else end % 24  # "0-24": all day
     return None if start == end else (start, end)
 
 
@@ -573,8 +574,10 @@ class BehaviorEngine:
         return time.time() < self._awake_until and not in_quiet_hours()
 
     def may_move(self):
-        """An explicitly requested patrol walks on; everything else needs a
-        recent contact outside the quiet hours."""
+        """Everything autonomous needs a recent contact outside the quiet
+        hours. The one exception is a patrol someone explicitly started
+        (/behavior/start): a person asked for it, so it walks — even at night
+        — until it ends (stuck, touched, a person seen, a stop)."""
         return self.state == BehaviorState.PATROL or self.awake()
 
     def force_state(self, state_name):

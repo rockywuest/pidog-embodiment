@@ -336,7 +336,8 @@ sudo systemctl enable --now nox-body nox-bridge nox-voice
 Inside Nox mode, the **autonomous behavior engine** (idle / play / rest / investigate) starts
 with the bridge. It is lively only for two minutes after someone talks to,
 touches or commands the dog; otherwise it lies still and lets the servos sleep,
-and in the quiet hours (22–7) it does nothing on its own at all. Repeated
+and in the quiet hours (22–7) it does nothing on its own at all (a patrol you
+start explicitly is the exception: you asked for it). Repeated
 noises (a TV) stop turning its head after a few times. It never walks off on its own: patrol starts only on
 `POST /behavior/start {"state": "patrol"}` (or with `NOX_AUTO_PATROL=1`), and
 once it ends (stuck, touched, a person seen, a stop) it stays ended. To keep the dog still unless you command it:
