@@ -223,6 +223,8 @@ Every key is documented with examples in the file itself.
 | `NOX_NO_AUTO` | `1` disables autonomous behavior at boot | autonomous on |
 | `WALK_SPEED` | Gait speed (forward/backward/turns), 1–100 | `95` |
 | `BEHAVIOR_USER_HOLD_S` | Seconds autonomy pauses after your movement command (voice/MCP/API) | `60` |
+| `BEHAVIOR_AWAKE_S` | Seconds the pet stays lively after contact (voice, touch, command); otherwise it lies still | `120` |
+| `BEHAVIOR_QUIET_HOURS` | Hours with no autonomous motion, e.g. `21-8`; `off` disables. Direct commands still work | `22-7` |
 | `NOX_AUTO_PATROL` | `1` lets a bored/curious dog start patrolling on its own | off: patrol only via `/behavior/start` |
 
 **Brain — `/etc/default/nox-brain`** (restart: `sudo systemctl restart nox-brain`; verify: `journalctl -u nox-brain | grep Language`)
@@ -333,7 +335,11 @@ sudo systemctl enable --now nox-body nox-bridge nox-voice
 ```
 
 Inside Nox mode, the **autonomous behavior engine** (idle / play / rest / investigate) starts
-with the bridge. It never walks off on its own: patrol starts only on
+with the bridge. It is lively only for two minutes after someone talks to,
+touches or commands the dog; otherwise it lies still and lets the servos sleep,
+and in the quiet hours (22–7) it does nothing on its own at all (a patrol you
+start explicitly is the exception: you asked for it). Repeated
+noises (a TV) stop turning its head after a few times. It never walks off on its own: patrol starts only on
 `POST /behavior/start {"state": "patrol"}` (or with `NOX_AUTO_PATROL=1`), and
 once it ends (stuck, touched, a person seen, a stop) it stays ended. To keep the dog still unless you command it:
 

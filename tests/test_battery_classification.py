@@ -110,7 +110,7 @@ def test_critical_battery_lies_down():
     e._on_battery(6.7)
     e._on_battery(6.1)
     assert e.critical_battery_mode
-    assert {"cmd": "move", "action": "lie", "_internal": True} in e.sent
+    assert {"cmd": "move", "action": "lie", "_urgent": True} in e.sent  # passes a resting dog
     e.sent.clear()
     e._on_battery(6.1)
     assert e.sent == []  # no alarm every two seconds

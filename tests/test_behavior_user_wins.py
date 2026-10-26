@@ -249,3 +249,94 @@ def test_a_forced_rest_is_still_restored():
     e._do_transition(be.BehaviorState.IDLE)
     e._honor_forced_state()
     assert e.state == be.BehaviorState.REST
+
+
+# ─── A calm pet: lively only after contact, quiet at night, habituates ───
+
+@pytest.fixture
+def daytime(monkeypatch):
+    monkeypatch.setattr(be, "QUIET_HOURS", None)
+
+
+def test_after_boot_the_dog_sends_nothing_that_moves(daytime):
+    e, rec = engine(forward=120.0)
+    e.running = True  # _execute_behavior stops at once otherwise
+    e._execute_behavior(be.IDLE_BEHAVIORS["stretch"])
+    e._handle_sound(30)
+    assert not e.awake() and rec.moves() == []
+    assert not [c for c in rec.cmds if c.get("cmd") in be.MOTION_CMDS]
+
+
+def test_contact_wakes_it_for_a_while(daytime, monkeypatch):
+    e, rec = engine()
+    e.running = True
+    e.user_command("voice")
+    assert e.awake()
+    e._execute_behavior(be.IDLE_BEHAVIORS["tail_wag"])
+    assert "wag_tail" in rec.moves()
+    e._awake_until = 0
+    rec.cmds.clear()
+    e._execute_behavior(be.IDLE_BEHAVIORS["tail_wag"])
+    assert rec.moves() == []
+
+
+def test_a_touch_wakes_it(daytime):
+    e, rec = engine()
+    e._handle_touch("L")
+    assert e.awake() and "wag_tail" in rec.moves()
+
+
+def test_quiet_hours_keep_it_still_even_after_contact(monkeypatch):
+    monkeypatch.setattr(be, "in_quiet_hours", lambda *a, **k: True)
+    e, rec = engine()
+    e.running = True
+    e.running = True
+    e.user_command("voice")
+    e._execute_behavior(be.IDLE_BEHAVIORS["tail_wag"])
+    assert rec.moves() == []
+
+
+def test_an_explicit_patrol_walks_even_when_nobody_touched_it(daytime):
+    e, rec = engine(forward=120.0)
+    e.force_state("patrol")
+    e._awake_until = 0
+    rec.cmds.clear()
+    e._tick_patrol()
+    assert "forward" in rec.moves()
+
+
+def test_battery_alarms_reach_a_resting_dog(daytime):
+    e, rec = engine()
+    e._on_battery(6.0)
+    e._on_battery(6.0)
+    assert "lie" in rec.moves()
+
+
+def test_repeated_sounds_habituate(daytime, monkeypatch):
+    e, rec = engine()
+    e.engage("test")
+    clock = [1000.0]
+    monkeypatch.setattr(be.time, "time", lambda: clock[0])
+    e._awake_until = 10_000
+    heads = lambda: [c for c in rec.cmds if c.get("cmd") == "head_ema"]
+    e._handle_sound(30)
+    assert len(heads()) == 1
+    for _ in range(4):                 # a TV: sounds every few seconds
+        clock[0] += 5
+        e._handle_sound(30)
+    assert len(heads()) == 1           # cooldown
+    clock[0] += 60                     # cooldown over, but habituated
+    e._handle_sound(30)
+    assert len(heads()) == 1 and e._sounds_ignored_until > clock[0]
+    clock[0] += be.SOUND_HABITUATION_S
+    e._handle_sound(30)
+    assert len(heads()) == 2
+
+
+@pytest.mark.parametrize("raw, hour, quiet", [
+    ("22-7", 23, True), ("22-7", 3, True), ("22-7", 7, False), ("22-7", 12, False),
+    ("13-15", 14, True), ("13-15", 15, False), ("off", 23, False), ("junk", 23, False),
+    ("0-24", 12, True), ("7-7", 7, False),
+])
+def test_quiet_hours_parse(raw, hour, quiet):
+    assert be.in_quiet_hours(hour, be.parse_quiet_hours(raw) or ()) is quiet
