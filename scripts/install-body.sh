@@ -58,6 +58,18 @@ for unit in "${UNITS[@]}"; do
   echo "Installed /etc/systemd/system/${unit}.service (User=${RUN_USER}, dir=${BODY_DIR})"
 done
 
+# Keep the logs across reboots. Raspberry Pi OS ships Storage=volatile: the
+# journal lives in RAM, so after a crash and a power-cycle the one log that
+# explains it is gone (happened in the field: the servos went wild and
+# nothing was left to read). Capped so it can't fill the card.
+if [[ ! -f /etc/systemd/journald.conf.d/nox-persistent.conf ]]; then
+  mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+  printf '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n' \
+    > /etc/systemd/journald.conf.d/nox-persistent.conf
+  systemctl restart systemd-journald
+  echo "Journal is persistent now (max 200 MB): journalctl -b -1 shows the previous boot"
+fi
+
 systemctl daemon-reload
 systemctl enable "${UNITS[@]}"
 
