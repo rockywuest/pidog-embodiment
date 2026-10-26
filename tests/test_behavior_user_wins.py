@@ -195,3 +195,57 @@ def test_the_legacy_engine_without_the_hook_is_fine(monkeypatch):
         running = True
     monkeypatch.setattr(bridge, "_behavior_engine", Legacy())
     bridge.note_user_command("/action ['lie']")  # must not raise
+
+
+def test_a_bored_dog_does_not_set_off_by_itself():
+    """Field report: the dog started patrolling unattended, cables still
+    plugged in. Mood-driven patrol is opt-in (NOX_AUTO_PATROL)."""
+    e, rec = engine(forward=120.0)
+    assert e._patrol_enabled is be.AUTO_PATROL is False
+    e._state_entered_at = 0
+    for _ in range(3):
+        e._request_transition(be.BehaviorState.PATROL)
+    e.mood.boredom = 1.0
+    e._last_behavior_time = 0
+    e._tick_idle(10_000)
+    assert e.state != be.BehaviorState.PATROL
+    assert "forward" not in rec.moves()
+
+
+def test_an_explicit_request_still_patrols():
+    e, rec = engine(forward=120.0)
+    assert e.force_state("patrol")["ok"]
+    assert e.state == be.BehaviorState.PATROL
+    rec.cmds.clear()
+    e._tick_patrol()
+    assert "forward" in rec.moves()
+
+
+def test_auto_patrol_can_be_turned_back_on(monkeypatch):
+    monkeypatch.setattr(be, "AUTO_PATROL", True)
+    e, _ = engine(forward=120.0)
+    e._state_entered_at = 0
+    for _ in range(3):
+        e._request_transition(be.BehaviorState.PATROL)
+    assert e.state == be.BehaviorState.PATROL
+
+
+@pytest.mark.parametrize("leave_to", ["idle", "investigate", "alert"])
+def test_a_finished_patrol_is_not_resumed(leave_to):
+    """Stuck, touched or a person seen: the patrol ends. The main loop used to
+    restore the forced patrol two seconds later — a walk nobody asked for."""
+    e, rec = engine(forward=120.0)
+    e.force_state("patrol")
+    e._do_transition(be.BehaviorState(leave_to))
+    rec.cmds.clear()
+    e._honor_forced_state()
+    assert e.state == be.BehaviorState(leave_to) and e._forced_state is None
+    assert "forward" not in rec.moves()
+
+
+def test_a_forced_rest_is_still_restored():
+    e, _ = engine()
+    e.force_state("rest")
+    e._do_transition(be.BehaviorState.IDLE)
+    e._honor_forced_state()
+    assert e.state == be.BehaviorState.REST
