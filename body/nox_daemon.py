@@ -148,6 +148,41 @@ def _is_sleep_hours():
 
 
 
+def _release_servos(wait_s=3.0):
+    """Let every servo go limp: pulse width 0 on all channels.
+
+    The robot HAT's MCU keeps sending the last pulse after we stop writing
+    angles, so "servos off" used to be a flag only. A sleeping dog held every
+    joint under load, ran warm, and hummed against the hand holding it, even
+    with all Nox services stopped. The next angle the SDK writes engages the
+    servo again, so any move wakes it. Call with the dog lying down: it sags.
+    Returns the number of channels released.
+    """
+    deadline = time.time() + wait_s
+    if _action_buffer_depth() > 0:
+        while _action_buffer_depth() > 0 and time.time() < deadline:
+            time.sleep(0.1)  # let a queued "lie" finish first
+        time.sleep(0.3)      # the last frame is still being written
+    released = 0
+    for part in ("legs", "head", "tail"):
+        for servo in getattr(getattr(dog, part, None), "servo_list", None) or []:
+            try:
+                servo.pulse_width(0)
+                released += 1
+            except Exception as e:
+                print(f"[nox] Servo release failed ({part}): {e}", flush=True)
+    return released
+
+
+def _servos_reengaged():
+    """A move writes angles, which engages released servos again. Back to
+    "resting" so the watchdog releases them once more instead of believing
+    they are still asleep (behavior-engine moves don't reset the timer)."""
+    global _idle_state, _servo_pwm_disabled
+    if _idle_state == "sleeping":
+        _idle_state, _servo_pwm_disabled = "resting", False
+
+
 def _mark_activity(internal=False):
     global _last_activity, _idle_state, _servo_pwm_disabled
     if internal:
@@ -178,6 +213,8 @@ def _idle_watchdog():
             print(f"[nox] Idle {int(elapsed)}s → deep sleep (servos off, LEDs dimmed)", flush=True)
             try:
                 with dog_lock:
+                    n = _release_servos()
+                    print(f"[nox] {n} servos released (no holding current)", flush=True)
                     dog.rgb_strip.set_mode("breath", [0, 0, 0] if _is_sleep_hours() else [0, 0, 15], bps=0.15)
             except Exception as e:
                 print(f"[nox] Deep sleep failed: {e}", flush=True)
@@ -406,9 +443,7 @@ def cmd_move(action, steps=3, speed=None, internal=False):
     if speed is None:
         speed = WALK_SPEED if action in GAIT_ACTIONS else 80
     _mark_activity(internal=internal)
-    if _idle_state == "sleeping":
-        # Re-init servos before moving
-        pass  # PiDog re-enables on do_action
+    _servos_reengaged()
     with dog_lock:
         # SDK do_action() swallows unknown actions (prints and returns), so we
         # must route ourselves. Probe the CLASS for a property: instance
@@ -830,12 +865,15 @@ def cmd_wake():
 
 
 def cmd_sleep():
-    """Sleep sequence."""
+    """Sleep sequence: lie down, then let the servos go limp."""
+    global _idle_state, _servo_pwm_disabled
     with dog_lock:
         dog.do_action('lie', speed=50)
         time.sleep(1)
+        released = _release_servos()
         dog.rgb_strip.set_mode('breath', [0, 0, 0] if _is_sleep_hours() else [0, 0, 80], bps=0.3)
-    return {"ok": True}
+    _idle_state, _servo_pwm_disabled = "sleeping", True
+    return {"ok": True, "servos_released": released}
 
 
 def cmd_reset():
@@ -1036,12 +1074,16 @@ def cmd_emergency_stop():
             dog.do_action("lie", speed=100)
         except Exception:
             pass
+        released = _release_servos()  # no holding force left to fight anything
         try:
             dog.rgb_strip.set_mode("boom", [255, 0, 0], bps=2.0)
         except Exception:
             pass
+    # "resting", not "sleeping": the behavior engine sends this itself, and
+    # its follow-up head moves (internal, they cannot wake the daemon) would
+    # be refused as "servos sleeping" forever. The watchdog sleeps it later.
     _idle_state = "resting"
-    return {"ok": True, "emergency": True, "motion": drained}
+    return {"ok": True, "emergency": True, "motion": drained, "servos_released": released}
 
 
 def cmd_stop_motion():
@@ -1260,6 +1302,7 @@ def shutdown(signum, frame):
             dog.rgb_strip.set_mode('monochromatic', [0, 0, 0])
             dog.do_action('lie', speed=50)
             time.sleep(1)
+            _release_servos()  # or they hold — and hum — until power-off
             dog.close()
     except:
         pass
