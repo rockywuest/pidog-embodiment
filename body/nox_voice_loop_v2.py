@@ -376,6 +376,63 @@ def is_own_speech(heard, speech_state):
     return False
 
 
+# ─── Command grammar (second opinion on every utterance) ───
+# The small Vosk model mishears short commands on the robot's cheap mic
+# ("legt dich hin", "weder mit dem schwanz"). Decoding the same audio a second
+# time against ONLY the command vocabulary is far more accurate for commands
+# and costs ~70-250 ms on a Pi 4. But a grammar forces everything into its
+# words: "nox was siehst du" came out as "nox sitz dreh hallo geh". Those
+# forced words carry low confidence (0.47-0.86, measured), real commands 1.00,
+# so the grammar result counts only when every word is >= GRAMMAR_MIN_CONF.
+# Otherwise the full transcript goes on unchanged. VOICE_COMMAND_GRAMMAR=0 off.
+GRAMMAR_MIN_CONF = 0.95
+COMMAND_WORDS = {
+    "de": ["sitz", "setz", "dich", "hin", "platz", "leg", "lieg", "steh", "auf", "stopp",
+           "halt", "komm", "her", "lauf", "geh", "los", "vorwärts", "zurück", "links",
+           "rechts", "dreh", "wedel", "mit", "dem", "schwanz", "bell", "schlaf", "streck",
+           "bitte", "mal", "und", "jetzt", "hallo", "hey", "noch"],
+    "en": ["sit", "down", "lie", "stand", "up", "stop", "come", "here", "walk", "go",
+           "forward", "back", "turn", "left", "right", "wag", "your", "tail", "bark",
+           "sleep", "stretch", "please", "and", "now", "hey", "hello"],
+    "fr": ["assis", "couché", "debout", "lève", "toi", "arrête", "stop", "viens", "avance",
+           "recule", "tourne", "gauche", "droite", "remue", "la", "queue", "aboie", "dors",
+           "étire", "s'il", "te", "plaît", "et", "hé", "salut"],
+}
+
+
+def model_language(path=None):
+    """de/en/fr from the model directory name (vosk-model-small-de-0.15)."""
+    name = os.path.basename((path or VOSK_MODEL_PATH).rstrip("/")).lower()
+    for lang in COMMAND_WORDS:
+        if f"-{lang}-" in f"{name}-":
+            return lang
+    return None
+
+
+def command_grammar(lang):
+    if not lang:
+        return None
+    return COMMAND_WORDS[lang] + WAKE_WORDS + ["[unk]"]
+
+
+GRAMMAR_MAX_CHUNKS = 240  # 30 s of audio: a phrase Vosk never ends is no command
+
+
+def confident_grammar_text(result, full_text, min_conf=GRAMMAR_MIN_CONF):
+    """The grammar transcript when every word is confident AND it covers the
+    whole phrase, else None. Words outside the grammar are not emitted at all,
+    so "nox wie spät ist es" could shrink to a confident "nox" — a grammar
+    reading with fewer words than the full transcript dropped something."""
+    words = [w for w in result.get("result", []) if w.get("word") != "[unk]"]
+    if not words or len(words) != len(result.get("result", [])):
+        return None
+    if len(words) != len(full_text.split()):
+        return None
+    if any(w.get("conf", 0) < min_conf for w in words):
+        return None
+    return " ".join(w["word"] for w in words)
+
+
 def is_just_noise(text):
     """Check if the recognized text is just noise/fragments."""
     noise_words = {
@@ -410,6 +467,13 @@ def main():
     model = Model(VOSK_MODEL_PATH)
     rec = KaldiRecognizer(model, SAMPLE_RATE)
     rec.SetWords(True)
+    grammar_rec = None
+    grammar = command_grammar(model_language())
+    if grammar and (os.environ.get("VOICE_COMMAND_GRAMMAR") or "1").strip() not in ("0", "off", "no"):
+        grammar_rec = KaldiRecognizer(model, SAMPLE_RATE, json.dumps(grammar, ensure_ascii=False))
+        grammar_rec.SetWords(True)
+        print(f"[voice-v2] Command grammar on ({model_language()}, {len(grammar)} words)", flush=True)
+    utterance = []  # audio of the phrase in progress, for the grammar pass
 
     # Audio input. No microphone is a clean, EXPLAINED stop (like no model) —
     # the old path invented plughw:3,0, arecord died on it, and the loop ended
@@ -455,11 +519,21 @@ def main():
             # Amplify before feeding to Vosk
             data = amplify_audio(data)
             energy.feed(compute_rms(data))
+            if grammar_rec is not None:
+                utterance.append(data)
+                del utterance[:-GRAMMAR_MAX_CHUNKS]
 
             if rec.AcceptWaveform(data):
                 speech_chunks = energy.harvest()
                 result = json.loads(rec.Result())
                 text = result.get("text", "").strip()
+                better = None
+                if grammar_rec is not None:
+                    audio, utterance = b"".join(utterance), []
+                    if text:
+                        grammar_rec.AcceptWaveform(audio)
+                        better = confident_grammar_text(json.loads(grammar_rec.FinalResult()), text)
+                        grammar_rec.Reset()
 
                 if len(text) < MIN_PHRASE_LENGTH:
                     continue
@@ -485,9 +559,15 @@ def main():
                 # replies and battery warnings arrive AFTER the time window.
                 speech_state = send_to_daemon({"cmd": "speech_state", "_internal": True},
                                               timeout=3)
-                if is_own_speech(text, speech_state):
+                if is_own_speech(text, speech_state) or (better and is_own_speech(better, speech_state)):
                     print(f"[voice-v2] Self-echo suppressed: '{text}'", flush=True)
                     continue
+
+                # Only now, past every filter, may the grammar reading replace
+                # the transcript — it must not turn an echo into a command.
+                if better and better != text:
+                    print(f"[voice-v2] Grammar: '{better}' (full model heard '{text}')", flush=True)
+                    text = better
 
                 print(f"[voice-v2] Heard: '{text}'", flush=True)
 

@@ -225,6 +225,7 @@ Every key is documented with examples in the file itself.
 | `BEHAVIOR_USER_HOLD_S` | Seconds autonomy pauses after your movement command (voice/MCP/API) | `60` |
 | `BEHAVIOR_AWAKE_S` | Seconds the pet stays lively after contact (voice, touch, command); otherwise it lies still | `120` |
 | `BEHAVIOR_QUIET_HOURS` | Hours with no autonomous motion, e.g. `21-8`; `off` disables. Direct commands still work | `22-7` |
+| `VOICE_COMMAND_GRAMMAR` | Second decode of each phrase against the command words only (de/en/fr models), used when every word is confident; `0` = off | on |
 | `NOX_AUTO_PATROL` | `1` lets a bored/curious dog start patrolling on its own | off: patrol only via `/behavior/start` |
 
 **Brain — `/etc/default/nox-brain`** (restart: `sudo systemctl restart nox-brain`; verify: `journalctl -u nox-brain | grep Language`)
