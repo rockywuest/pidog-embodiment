@@ -68,6 +68,7 @@ def test_plain_text_reply_still_executes_the_users_command(monkeypatch):
     sent = []
     monkeypatch.setattr(vb, "bridge_get", lambda path, timeout=10: {"error": "offline"})
     monkeypatch.setattr(vb, "bridge_post", lambda path, data, timeout=15: sent.append((path, data)))
+    monkeypatch.setattr(vb, "FAST_COMMANDS", False)  # this test is about the LLM path
     monkeypatch.setattr(vb, "call_llm", lambda messages: "Okay, I will sit down now, friend!")
     vb.process_voice_intelligent({"text": "Setz dich hin und wedel mit dem Schwanz!"})
     combos = [d for p, d in sent if p == "/combo"]
