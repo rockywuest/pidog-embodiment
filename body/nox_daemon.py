@@ -159,8 +159,10 @@ def _release_servos(wait_s=3.0):
     Returns the number of channels released.
     """
     deadline = time.time() + wait_s
-    while _action_buffer_depth() > 0 and time.time() < deadline:
-        time.sleep(0.1)  # let a queued "lie" finish first
+    if _action_buffer_depth() > 0:
+        while _action_buffer_depth() > 0 and time.time() < deadline:
+            time.sleep(0.1)  # let a queued "lie" finish first
+        time.sleep(0.3)      # the last frame is still being written
     released = 0
     for part in ("legs", "head", "tail"):
         for servo in getattr(getattr(dog, part, None), "servo_list", None) or []:
@@ -170,6 +172,15 @@ def _release_servos(wait_s=3.0):
             except Exception as e:
                 print(f"[nox] Servo release failed ({part}): {e}", flush=True)
     return released
+
+
+def _servos_reengaged():
+    """A move writes angles, which engages released servos again. Back to
+    "resting" so the watchdog releases them once more instead of believing
+    they are still asleep (behavior-engine moves don't reset the timer)."""
+    global _idle_state, _servo_pwm_disabled
+    if _idle_state == "sleeping":
+        _idle_state, _servo_pwm_disabled = "resting", False
 
 
 def _mark_activity(internal=False):
@@ -432,9 +443,7 @@ def cmd_move(action, steps=3, speed=None, internal=False):
     if speed is None:
         speed = WALK_SPEED if action in GAIT_ACTIONS else 80
     _mark_activity(internal=internal)
-    if _idle_state == "sleeping":
-        # Re-init servos before moving
-        pass  # PiDog re-enables on do_action
+    _servos_reengaged()
     with dog_lock:
         # SDK do_action() swallows unknown actions (prints and returns), so we
         # must route ourselves. Probe the CLASS for a property: instance
@@ -1070,7 +1079,10 @@ def cmd_emergency_stop():
             dog.rgb_strip.set_mode("boom", [255, 0, 0], bps=2.0)
         except Exception:
             pass
-    _idle_state, _servo_pwm_disabled = "sleeping", True
+    # "resting", not "sleeping": the behavior engine sends this itself, and
+    # its follow-up head moves (internal, they cannot wake the daemon) would
+    # be refused as "servos sleeping" forever. The watchdog sleeps it later.
+    _idle_state = "resting"
     return {"ok": True, "emergency": True, "motion": drained, "servos_released": released}
 
 

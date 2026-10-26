@@ -29,3 +29,14 @@ def test_release_comes_after_lying_down():
     for name in ("cmd_sleep", "cmd_emergency_stop", "shutdown"):
         body = _body(name)
         assert body.index("lie") < body.index("_release_servos()"), name
+
+
+def test_an_emergency_stop_does_not_lock_out_the_engines_head_moves():
+    body = _body("cmd_emergency_stop")
+    assert '_idle_state = "resting"' in body and "_servo_pwm_disabled" not in body.split("released =")[1]
+
+
+def test_a_move_after_release_lets_the_watchdog_release_again():
+    assert "_servos_reengaged()" in _body("cmd_move")
+    body = _body("_servos_reengaged")
+    assert '"resting", False' in body
