@@ -13,6 +13,8 @@ import brain.nox_voice_brain as vb
     ("dreh dich nach rechts", ["turn_right"]),
     ("sit down please", ["sit"]),
     ("assis-toi", ["sit"]),
+    ("turn right", ["turn_right"]),
+    ("come back", ["forward"]),  # "come back here" means come, not reverse
 ])
 def test_plain_commands_are_recognised(text, actions):
     assert vb.plain_command(text) == actions
@@ -25,6 +27,8 @@ def test_plain_commands_are_recognised(text, actions):
     "geh nach links zum Sofa",
     "wie geht es dir",
     "good dog",
+    "Right, sit",                # an interjection, not a turn
+    "Right",
     "",
 ])
 def test_anything_more_than_a_command_is_not(text):
@@ -44,6 +48,7 @@ def test_a_plain_command_goes_straight_to_the_body(monkeypatch):
     sent, llm = _run(monkeypatch, "Nox, Platz")
     assert not llm
     assert sent == [("/combo", {"actions": ["lie"]})]
+    assert vb.conversation.history[-1]["content"]  # never an empty assistant turn
 
 
 def test_a_question_still_goes_to_the_llm(monkeypatch):

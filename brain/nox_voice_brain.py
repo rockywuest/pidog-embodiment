@@ -529,7 +529,9 @@ def process_voice_intelligent(msg):
     if fast:
         print(f"[brain] Fast path: {fast} (no LLM)", flush=True)
         bridge_post("/combo", {"actions": fast})
-        conversation.add_exchange(text, "")
+        # In the reply format the LLM uses, so later turns know what happened
+        # (and no endpoint sees an empty assistant message).
+        conversation.add_exchange(text, json.dumps({"speak": "", "actions": fast}))
         return
     
     # Build context from current perception
@@ -730,6 +732,10 @@ def plain_command(text):
     if cmd["intent"] != "command":
         return None
     rest = " ".join((text or "").lower().replace("’", "'").split())
+    # "Right, sit" is a "yes" before a command, not a turn: a bare English
+    # right/left is left to the LLM.
+    if re.search(r"(?<![\w-])(?<!turn )(?<!go )(?:right|left)(?!\w)", rest):
+        return None
     for _, patterns in _INTENTS:
         for pattern in patterns.values():
             rest = re.sub(r"(?<![\w-])(?:" + pattern + r")(?!\w)", " ", rest)
