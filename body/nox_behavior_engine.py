@@ -725,16 +725,26 @@ class BehaviorEngine:
                 time.sleep(120)
 
     # ─── Main Behavior Loop ───────────────────────────────────────────────
+    def _honor_forced_state(self):
+        """Put back a state the API asked for. Not a patrol, though: once the
+        dog is out of it — stuck, touched, saw someone — the walk is over, and
+        restoring it two seconds later meant walking without a new request."""
+        forced = self._forced_state
+        if not forced or self.state == forced:
+            return
+        self._forced_state = None
+        if forced == BehaviorState.PATROL:
+            print("[behavior] Patrol ended — not resuming without a new request", flush=True)
+            return
+        self._do_transition(forced)
+
     def _main_loop(self):
         """Main FSM tick loop — runs every 2 seconds."""
         while self.running:
             try:
                 now = time.time()
 
-                # Honor forced state from API
-                if self._forced_state and self.state != self._forced_state:
-                    self._do_transition(self._forced_state)
-                    self._forced_state = None
+                self._honor_forced_state()
 
                 # Low battery → REST
                 if self.low_battery_mode:

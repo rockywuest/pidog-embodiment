@@ -228,3 +228,24 @@ def test_auto_patrol_can_be_turned_back_on(monkeypatch):
     for _ in range(3):
         e._request_transition(be.BehaviorState.PATROL)
     assert e.state == be.BehaviorState.PATROL
+
+
+@pytest.mark.parametrize("leave_to", ["idle", "investigate", "alert"])
+def test_a_finished_patrol_is_not_resumed(leave_to):
+    """Stuck, touched or a person seen: the patrol ends. The main loop used to
+    restore the forced patrol two seconds later — a walk nobody asked for."""
+    e, rec = engine(forward=120.0)
+    e.force_state("patrol")
+    e._do_transition(be.BehaviorState(leave_to))
+    rec.cmds.clear()
+    e._honor_forced_state()
+    assert e.state == be.BehaviorState(leave_to) and e._forced_state is None
+    assert "forward" not in rec.moves()
+
+
+def test_a_forced_rest_is_still_restored():
+    e, _ = engine()
+    e.force_state("rest")
+    e._do_transition(be.BehaviorState.IDLE)
+    e._honor_forced_state()
+    assert e.state == be.BehaviorState.REST

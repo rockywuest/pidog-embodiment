@@ -331,9 +331,10 @@ sudo systemctl disable nox-body nox-bridge nox-voice
 sudo systemctl enable --now nox-body nox-bridge nox-voice
 ```
 
-Inside Nox mode, the **autonomous behavior engine** (idle / play / rest) starts
+Inside Nox mode, the **autonomous behavior engine** (idle / play / rest / investigate) starts
 with the bridge. It never walks off on its own: patrol starts only on
-`POST /behavior/start {"state": "patrol"}` (or with `NOX_AUTO_PATROL=1`). To keep the dog still unless you command it:
+`POST /behavior/start {"state": "patrol"}` (or with `NOX_AUTO_PATROL=1`), and
+once it ends (stuck, touched, a person seen, a stop) it stays ended. To keep the dog still unless you command it:
 
 | Scope | How |
 |---|---|
