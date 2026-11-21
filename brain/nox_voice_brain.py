@@ -510,6 +510,20 @@ def sanitize_speech(text):
     return cleaned or None
 
 
+_D_ACCORD = re.compile(r"(?<!\w)d['\u2019]accord(?!\w)", re.IGNORECASE)
+
+
+def echo_safe_speech(text):
+    """The fixed replies stopped saying "D'accord !" because Vosk hears the
+    dog's own voice say it as 'dakar' — an echo no word match can catch
+    (issue #45, log 10). In chat mode the LLM writes its own sentences and
+    still reached for the word (log 11), so it is swapped for "OK" on the
+    way to the TTS, whatever the model wrote."""
+    if not text:
+        return text
+    return _D_ACCORD.sub("OK", text)
+
+
 # ─── Voice Processing ───
 def process_voice_intelligent(msg):
     """Process voice input using Claude AI."""
@@ -570,7 +584,7 @@ def process_voice_intelligent(msg):
     if response_text:
         parsed = parse_response(response_text)
 
-        speak_text = sanitize_speech(parsed.get("speak", response_text))
+        speak_text = echo_safe_speech(sanitize_speech(parsed.get("speak", response_text)))
         actions = parsed.get("actions", [])
         if parsed.get("_no_json") and not actions:
             # A small model that ignored the JSON format would make the dog
